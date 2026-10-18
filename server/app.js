@@ -142,12 +142,13 @@ function createApp() {
   // Songs from the catalogue you already have get their library id.
   function markOwned(songs) {
     const db = getDB()
-    const byDeezer = new Map(db.prepare('SELECT id, deezer_id FROM tracks WHERE deezer_id IS NOT NULL').all().map(r => [r.deezer_id, r.id]))
-    const byKey = new Map(db.prepare('SELECT id, artist, title FROM tracks').all().map(r => [songKey(r.artist, r.title), r.id]))
+    const rows = db.prepare('SELECT id, deezer_id, artist, title, art IS NOT NULL AS has_art FROM tracks').all()
+    const byDeezer = new Map(rows.filter(r => r.deezer_id).map(r => [r.deezer_id, r]))
+    const byKey = new Map(rows.map(r => [songKey(r.artist, r.title), r]))
     for (const s of songs || []) {
       if (!s || s.local_id) continue
-      const id = byDeezer.get(s.deezer_id) || byKey.get(songKey(s.artist, s.title))
-      if (id) s.local_id = id
+      const own = byDeezer.get(s.deezer_id) || byKey.get(songKey(s.artist, s.title))
+      if (own) { s.local_id = own.id; s.has_art = own.has_art }
     }
     return songs
   }

@@ -85,12 +85,12 @@ function spread(items) {
 }
 function coversOf(items) {
   const seen = new Set(), covers = []
-  for (const t of items) { const c = t.cover || (t.local_id ? `local:${t.local_id}` : null); if (c && !seen.has(c)) { seen.add(c); covers.push(c) } if (covers.length === 4) break }
+  for (const t of items) { const c = t.cover || (t.local_id && t.has_art ? `local:${t.local_id}` : null); if (c && !seen.has(c)) { seen.add(c); covers.push(c) } if (covers.length === 4) break }
   return covers
 }
 
 /** A song you have, in the mix's shape. */
-const localSong = t => ({ local_id: t.id, title: t.title, artist: t.artist, album: t.album || '', duration: t.duration, cover: null, deezer_id: t.deezer_id || null })
+const localSong = t => ({ local_id: t.id, has_art: t.has_art, title: t.title, artist: t.artist, album: t.album || '', duration: t.duration, cover: null, deezer_id: t.deezer_id || null })
 
 async function build(db, { now = Date.now() } = {}) {
   const date = new Date(now).toISOString().slice(0, 10)
@@ -158,12 +158,12 @@ async function forYou({ force = false, now = Date.now() } = {}) {
   }
   // Downloaded since: the song is now yours (plays offline, from the library).
   const { owned } = library(db)
-  const byDeezer = new Map(db.prepare('SELECT id, deezer_id FROM tracks WHERE deezer_id IS NOT NULL').all().map(r => [r.deezer_id, r.id]))
+  const byDeezer = new Map(db.prepare('SELECT id, deezer_id, art IS NOT NULL AS has_art FROM tracks WHERE deezer_id IS NOT NULL').all().map(r => [r.deezer_id, r]))
   for (const mix of result.mixes) {
     for (const t of mix.tracks) {
       if (t.local_id) continue
-      const id = (t.deezer_id && byDeezer.get(t.deezer_id)) || owned.get(songKey(t.artist, t.title))?.id
-      if (id) t.local_id = id
+      const own = (t.deezer_id && byDeezer.get(t.deezer_id)) || owned.get(songKey(t.artist, t.title))
+      if (own) { t.local_id = own.id; t.has_art = own.has_art }
     }
   }
   return result
