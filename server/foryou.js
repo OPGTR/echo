@@ -10,7 +10,7 @@
 const fs = require('fs')
 const path = require('path')
 const deezer = require('./deezer')
-const { getDB } = require('./db')
+const { getDB, getSetting } = require('./db')
 const { dataDir } = require('./paths')
 
 const DAY = 24 * 60 * 60 * 1000
@@ -89,10 +89,38 @@ function coversOf(items) {
   return covers
 }
 
+// ------------------------------------------------------------------ eras
+// "Récentes": from the artist's releases of the last 3 years; "Anciennes":
+// from releases more than 5 years old; "Les deux": their best songs.
+function inEra(year, era, now = Date.now()) {
+  if (!year || era === 'both') return true
+  const current = new Date(now).getFullYear()
+  return era === 'recent' ? year >= current - 3 : year <= current - 6
+}
+
+/** An artist's songs for a mix, in the chosen era. */
+async function artistSongs(artistId, era = 'both', { now = Date.now(), want = 10 } = {}) {
+  const top = (await deezer.topTracks(artistId)) || []
+  if (era === 'both') return top.map(t => deezer.song(t))
+  let albums = []
+  try { albums = await deezer.artistAlbums(artistId) } catch {}
+  const years = new Map(albums.map(a => [a.id, a.year]))
+  const out = top.filter(t => inEra(years.get(String(t.album?.id)), era, now)).map(t => deezer.song(t))
+  if (out.length < want) {
+    const pick = albums.filter(a => inEra(a.year, era, now) && a.type !== 'compile')
+    const chosen = era === 'recent' ? pick.slice(0, 2) : shuffle(pick, rng(`${artistId}${new Date(now).toISOString().slice(0, 10)}`)).slice(0, 2)
+    for (const a of chosen) {
+      try { const full = await deezer.album(a.id); out.push(...full.tracks) } catch {}
+      if (out.length >= want * 2) break
+    }
+  }
+  return out
+}
+
 /** A song you have, in the mix's shape. */
 const localSong = t => ({ local_id: t.id, has_art: t.has_art, title: t.title, artist: t.artist, album: t.album || '', duration: t.duration, cover: null, deezer_id: t.deezer_id || null })
 
-async function build(db, { now = Date.now() } = {}) {
+async function build(db, { now = Date.now(), era = 'both' } = {}) {
   const date = new Date(now).toISOString().slice(0, 10)
   const random = rng(date)
   const { owned, byArtist } = library(db)
@@ -107,9 +135,9 @@ async function build(db, { now = Date.now() } = {}) {
   const mixes = []
   await mapLimited(found.slice(0, MAX_DAILY), async ({ seed, artist }, index) => {
     const around = shuffle((relatedBy[index] || []).slice(0, 10), random).slice(0, 7)
-    const groups = await mapLimited([artist, ...around], a => deezer.topTracks(a.id), 4)
+    const groups = await mapLimited([artist, ...around], a => artistSongs(a.id, era, { now }), 4)
     const picks = []
-    groups.forEach((g, i) => picks.push(...shuffle((g || []).map(t => deezer.song(t)).filter(fresh), random).slice(0, i === 0 ? 3 : 4)))
+    groups.forEach((g, i) => picks.push(...shuffle((g || []).filter(fresh), random).slice(0, i === 0 ? 3 : 4)))
     const mine = shuffle(byArtist.get(norm(seed.name)) || [], random).slice(0, OWNED_PER_MIX).map(localSong)
     const tracks = spread(shuffle([...picks.slice(0, MIX_SIZE - mine.length), ...mine], random)).map(take)
     if (tracks.length >= 6) {
@@ -127,8 +155,8 @@ async function build(db, { now = Date.now() } = {}) {
   }))
   const candidates = shuffle([...pool.values()], random).sort((x, y) => y.hits - x.hits).slice(0, 30)
   const discover = []
-  ;(await mapLimited(candidates, c => deezer.topTracks(c.artist.id), 4)).forEach(list => {
-    const options = (list || []).map(t => deezer.song(t)).filter(fresh)
+  ;(await mapLimited(candidates, c => artistSongs(c.artist.id, era, { now, want: 3 }), 4)).forEach(list => {
+    const options = (list || []).filter(fresh)
     const pick = options[Math.floor(random() * Math.min(3, options.length))]
     if (pick) discover.push(take(pick))
   })
@@ -140,20 +168,21 @@ async function build(db, { now = Date.now() } = {}) {
     const tracks = (await deezer.chart().catch(() => [])).map(t => deezer.song(t)).filter(fresh).slice(0, 40).map(take)
     if (tracks.length) out.push({ id: 'chart', kind: 'chart', index: 0, seed: null, artists: [...new Set(tracks.map(t => t.artist))].slice(0, 4), covers: coversOf(tracks), tracks })
   }
-  return { date, generatedAt: now, basedOn: found.map(f => f.artist.name).slice(0, 6), mixes: out }
+  return { date, era, generatedAt: now, basedOn: found.map(f => f.artist.name).slice(0, 6), mixes: out }
 }
 
 /** Today's mixes (built once a day, or when `force`). Songs you got since are marked as yours. */
-async function forYou({ force = false, now = Date.now() } = {}) {
+async function forYou({ force = false, now = Date.now(), era = null } = {}) {
   const db = getDB()
   const file = path.join(dataDir(), 'foryou.json')
   const today = new Date(now).toISOString().slice(0, 10)
+  const wanted = ['recent', 'old', 'both'].includes(era) ? era : (getSetting('mix_era') || 'both')
   let result = null
   if (!force) {
-    try { const saved = JSON.parse(fs.readFileSync(file, 'utf8')); if (saved?.date === today && Array.isArray(saved.mixes)) result = { ...saved, cached: true } } catch {}
+    try { const saved = JSON.parse(fs.readFileSync(file, 'utf8')); if (saved?.date === today && (saved.era || 'both') === wanted && Array.isArray(saved.mixes)) result = { ...saved, cached: true } } catch {}
   }
   if (!result) {
-    result = await build(db, { now })
+    result = await build(db, { now, era: wanted })
     if (result.mixes.length) { try { fs.writeFileSync(file, JSON.stringify(result)) } catch {} }
   }
   // Downloaded since: the song is now yours (plays offline, from the library).
@@ -166,7 +195,52 @@ async function forYou({ force = false, now = Date.now() } = {}) {
       if (own) { t.local_id = own.id; t.has_art = own.has_art }
     }
   }
-  return result
+  return { ...result, rediscover: rediscover(db, { now }) }
 }
 
-module.exports = { forYou, build, seeds, songKey }
+/**
+ * "À redécouvrir": songs you played a lot, and not lately.
+ * Many plays overall, none in the last 6 weeks.
+ */
+function rediscover(db, { now = Date.now(), limit = 30 } = {}) {
+  const since = now - 42 * DAY
+  return db.prepare(`
+    SELECT id, title, artist, album, duration, art IS NOT NULL AS has_art, deezer_id, play_count, last_played
+      FROM tracks
+     WHERE play_count >= 5 AND last_played IS NOT NULL AND last_played < ?
+     ORDER BY play_count DESC, last_played ASC
+     LIMIT ?`).all(since, limit).map(t => ({ ...localSong(t), play_count: t.play_count, last_played: t.last_played }))
+}
+
+/** Your most listened artists (for "Ton mix"): [{ name, score }]. */
+function topArtists(limit = 20) {
+  return seeds(getDB()).slice(0, limit)
+}
+
+/**
+ * "Ton mix": 2 or 3 artists you pick, their songs and their neighbours'
+ * (in the chosen era), a few of yours among them.
+ */
+async function customMix(picked = [], { era = 'both', now = Date.now() } = {}) {
+  const db = getDB()
+  const random = rng(`${now}${picked.map(p => p.name || p.id).join()}`)
+  const { owned, byArtist } = library(db)
+  const artists = (await mapLimited(picked.slice(0, 3), async p => (p.id ? { id: String(p.id), name: p.name } : await deezer.findArtist(p.name)))).filter(Boolean)
+  if (!artists.length) throw Object.assign(new Error('Choisis au moins un artiste.'), { status: 400 })
+  const relatedBy = await mapLimited(artists, a => deezer.related(a.id))
+  const neighbours = []
+  relatedBy.forEach(list => shuffle((list || []).slice(0, 8), random).slice(0, 3).forEach(a => { if (!artists.some(x => String(x.id) === String(a.id)) && !neighbours.some(n => n.id === a.id)) neighbours.push(a) }))
+  const used = new Set()
+  const fresh = t => { const k = songKey(t.artist, t.title); if (used.has(k)) return false; used.add(k); return true }
+  const groups = await mapLimited([...artists, ...neighbours], a => artistSongs(a.id, era, { now }), 4)
+  const picks = []
+  groups.forEach((g, i) => picks.push(...shuffle((g || []).filter(fresh), random).slice(0, i < artists.length ? 7 : 3)))
+  const mine = artists.flatMap(a => shuffle(byArtist.get(norm(a.name)) || [], random).slice(0, 2)).map(localSong)
+  const tracks = spread(shuffle([...picks.slice(0, 30 - mine.length), ...mine], random)).map(t => {
+    const own = !t.local_id && owned.get(songKey(t.artist, t.title))
+    return own ? { ...t, local_id: own.id, has_art: own.has_art } : t
+  })
+  return { artists: artists.map(a => ({ id: String(a.id), name: a.name })), era, tracks }
+}
+
+module.exports = { forYou, build, seeds, songKey, rediscover, topArtists, customMix, artistSongs }

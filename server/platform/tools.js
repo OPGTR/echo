@@ -154,9 +154,61 @@ function codecName(format = {}) {
   return String(format.codec || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '_')
 }
 
-async function probe(file) {
+/** The container, from the file's first bytes (a name can lie: "audio.flac" holding AAC). */
+function sniff(file) {
+  let head = Buffer.alloc(0)
+  try { const fd = fs.openSync(file, 'r'); head = Buffer.alloc(16); fs.readSync(fd, head, 0, 16, 0); fs.closeSync(fd) } catch {}
+  const at = (i, text) => head.slice(i, i + text.length).toString('latin1') === text
+  if (at(0, 'fLaC')) return { ext: '.flac', mime: 'audio/flac' }
+  if (at(4, 'ftyp')) return { ext: '.m4a', mime: 'audio/mp4' }
+  if (at(0, 'OggS')) return { ext: '.ogg', mime: 'audio/ogg' }
+  if (at(0, 'RIFF')) return { ext: '.wav', mime: 'audio/wav' }
+  if (at(0, 'FORM')) return { ext: '.aiff', mime: 'audio/aiff' }
+  if (at(0, 'ID3')) return { ext: '.mp3', mime: 'audio/mpeg', id3: true }
+  if (head[0] === 0xff && (head[1] & 0xe0) === 0xe0) return { ext: head[1] & 0x06 ? '.mp3' : '.aac', mime: head[1] & 0x06 ? 'audio/mpeg' : 'audio/aac' }
+  return null
+}
+
+/** Reads the format with ffmpeg itself (WebAssembly): for files music-metadata can't read. */
+function ffmpegInfo(file) {
+  return new Promise(resolve => {
+    const child = spawnFfmpeg(['-hide_banner', '-i', file, '-f', 'null', '-t', '0', '-'])
+    let err = ''
+    child.stderr.on('data', d => { err += d })
+    child.on('close', () => {
+      const dur = /Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/.exec(err)
+      const audio = /Audio: ([a-z0-9_]+)[^,\n]*(?:, (\d+) Hz)?(?:, ([a-z0-9.() ]+))?(?:, ([a-z0-9]+))?/i.exec(err)
+      if (!audio) return resolve(null)
+      const fmt = audio[4] || ''
+      resolve({
+        codec: audio[1], container: (/Input #0, ([^,]+)/.exec(err) || [])[1] || '',
+        sampleRate: audio[2] ? Number(audio[2]) : undefined,
+        numberOfChannels: /mono/.test(audio[3] || '') ? 1 : 2,
+        bitsPerSample: /s32|s24/.test(fmt) ? 24 : /s16/.test(fmt) ? 16 : undefined,
+        duration: dur ? Number(dur[1]) * 3600 + Number(dur[2]) * 60 + Number(dur[3]) : undefined,
+      })
+    })
+  })
+}
+
+async function readFormat(file) {
   const mm = require('music-metadata')
-  const meta = await mm.parseFile(file, { duration: true, skipCovers: true })
+  try {
+    return await mm.parseFile(file, { duration: true, skipCovers: true })
+  } catch (first) {
+    // The name says one format, the bytes another: read by content.
+    const kind = sniff(file)
+    if (kind) {
+      try { return await mm.parseStream(fs.createReadStream(file), { mimeType: kind.mime, size: fs.statSync(file).size }, { duration: true, skipCovers: true }) } catch {}
+    }
+    const info = await ffmpegInfo(file)
+    if (info) return { format: info, common: {} }
+    throw first
+  }
+}
+
+async function probe(file) {
+  const meta = await readFormat(file)
   const f = meta.format || {}
   const stream = {
     index: 0,
@@ -262,4 +314,4 @@ function install() {
   }
 }
 
-module.exports = { install, probe, codecName }
+module.exports = { sniff, install, probe, codecName }

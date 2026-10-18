@@ -43,6 +43,35 @@ CREATE TABLE IF NOT EXISTS downloads (
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS downloads_deezer ON downloads (deezer_id);
+CREATE TABLE IF NOT EXISTS playlists (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'user',
+  source TEXT, source_url TEXT,
+  sort TEXT NOT NULL DEFAULT 'custom',
+  sort_dir TEXT NOT NULL DEFAULT 'asc',
+  meta TEXT,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS playlist_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+  pos REAL NOT NULL,
+  local_id TEXT, deezer_id TEXT,
+  title TEXT NOT NULL, artist TEXT, album TEXT, cover TEXT, duration REAL,
+  added_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS playlist_items_pl ON playlist_items (playlist_id, pos);
+CREATE TABLE IF NOT EXISTS follows (
+  artist_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  picture TEXT,
+  latest_id TEXT, latest_json TEXT,
+  seen_id TEXT,
+  checked_at INTEGER,
+  followed_at INTEGER NOT NULL
+);
 `
 
 function getDB() {
