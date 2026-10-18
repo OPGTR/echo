@@ -171,12 +171,12 @@ public class PlaybackService extends MediaSessionService {
                 || super.isCommandAvailable(command);
         }
 
-        @Override public void seekToNext() { next(); }
-        @Override public void seekToNextMediaItem() { next(); }
-        @Override public void seekToPrevious() { previous(); }
-        @Override public void seekToPreviousMediaItem() { previous(); }
+        @Override public void seekToNext() { goNext(); }
+        @Override public void seekToNextMediaItem() { goNext(); }
+        @Override public void seekToPrevious() { goPrevious(); }
+        @Override public void seekToPreviousMediaItem() { goPrevious(); }
 
-        private void next() {
+        private void goNext() {
             // The next song is already here: play it now, and tell the app.
             if (getWrappedPlayer().getMediaItemCount() > getWrappedPlayer().getCurrentMediaItemIndex() + 1) {
                 getWrappedPlayer().seekToNextMediaItem();
@@ -186,7 +186,7 @@ public class PlaybackService extends MediaSessionService {
             }
         }
 
-        private void previous() {
+        private void goPrevious() {
             if (getWrappedPlayer().getCurrentPosition() > 4000) getWrappedPlayer().seekTo(0);
             else emit("remote", json("action", "previous"));
         }

@@ -49,6 +49,9 @@ function Screen() {
   return <Home />
 }
 
+// Tests drive navigation through this (browser only).
+if (typeof window !== 'undefined' && !window.Capacitor?.isNativePlatform?.()) window.__echo = { open: s => useApp.getState().open(s), setTab: t => useApp.getState().setTab(t), closeSheet: () => useApp.getState().closeSheet() }
+
 export default function App() {
   const [phase, setPhase] = useState('starting') // starting | onboarding | ready | failed
   const [error, setError] = useState('')

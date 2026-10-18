@@ -335,7 +335,7 @@ function AudioTestResult({ limit, output, onDone, onRetry }) {
     <div className="page">
       <Back />
       <p className="muted" style={{ margin: 0, fontSize: 14 }}>{t('Résultat du test audio')}</p>
-      <h1 className="result-h">{t('Tu entends jusqu’à {k} kHz', { k: Math.round(limit / 100) / 10 })}</h1>
+      <h1 className="result-h">{t('Tu entends jusqu’à {k}\u00a0kHz', { k: Math.round(limit / 100) / 10 })}</h1>
       <div style={{ marginTop: 16 }}><Spectrum limit={limit} /></div>
       <div className="set-card pad" style={{ marginTop: 20 }}>
         <div style={{ fontWeight: 750, fontSize: 18 }}>{recommended === 'cd' ? t('FLAC 16 bits te suffit') : t('Le MP3 te suffit')}</div>

@@ -2,7 +2,7 @@
 // rings with the song's progress), the full player with lyrics and casting,
 // the queue, sheets, toasts.
 import React, { useEffect, useRef, useState } from 'react'
-import { Sparkles, Search, Library, ListMusic, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Heart, ChevronDown, Loader2, Download, Settings, X, MicVocal, Cast, Smartphone, Tv, Speaker, ArrowUpCircle, Check } from 'lucide-react'
+import { Sparkles, Search, Library, ListMusic, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Heart, ChevronDown, Loader2, Download, Settings, X, Mic, Cast, Smartphone, Tv, Speaker, ArrowUpCircle, Check } from 'lucide-react'
 import { useApp } from '../store'
 import { api } from '../api'
 import { usePlayer, toggle, next, previous, seek, toggleShuffle, cycleRepeat, toggleLike, openFull, coverOf, keyOf, jumpTo, removeFromQueue, codecLabel, castScan, castTo, stopCasting } from '../player'
@@ -108,7 +108,7 @@ export function FullPlayer() {
       </div>
       <div className="player-tools">
         <CodecBadge song={song} />
-        <button type="button" className="sq-btn" onClick={() => setLyricsOpen(true)} aria-label={t('Paroles et karaoké')}><MicVocal size={18} /></button>
+        <button type="button" className="sq-btn" onClick={() => setLyricsOpen(true)} aria-label={t('Paroles et karaoké')}><Mic size={18} /></button>
       </div>
       <Cover song={song} className="cover-big" />
       <div className="player-bottom">
