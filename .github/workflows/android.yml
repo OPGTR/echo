@@ -81,7 +81,19 @@ jobs:
           npx cap sync android
           cd android
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace assembleRelease
+          set -o pipefail
+          ./gradlew --no-daemon assembleRelease 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Build log (when it fails)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -f build.log ] || exit 0
+          grep -nE "error:|warning: \[|What went wrong|FAILED|Exception|e: " build.log | head -200 > build-errors.txt || true
+          tail -150 build.log >> build-errors.txt
+          gh release view ci-logs > /dev/null 2>&1 || gh release create ci-logs --prerelease --title "CI logs" --notes "Build logs" --target "$GITHUB_SHA"
+          gh release upload ci-logs build-errors.txt --clobber
 
       - name: Collect
         run: |
