@@ -1,0 +1,25 @@
+{
+  "appId": "com.opgtr.echo",
+  "appName": "Écho",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "http",
+    "hostname": "localhost",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#1a1838",
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "CapacitorNodeJS": {
+      "nodeDir": "nodejs",
+      "startMode": "auto"
+    },
+    "SystemBars": {
+      "insetsHandling": "css",
+      "style": "DARK"
+    }
+  }
+}

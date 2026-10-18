@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Écho</string>
+    <string name="title_activity_main">Écho</string>
+    <string name="package_name">com.opgtr.echo</string>
+    <string name="custom_url_scheme">com.opgtr.echo</string>
+</resources>

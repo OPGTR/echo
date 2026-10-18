@@ -32,7 +32,7 @@ function update(id, fields) {
 const job = id => getDB().prepare('SELECT * FROM downloads WHERE id = ?').get(id)
 
 function list() {
-  return getDB().prepare(`SELECT * FROM downloads ORDER BY CASE status WHEN 'downloading' THEN 0 WHEN 'saving' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, updated_at DESC LIMIT 300`).all()
+  return getDB().prepare(`SELECT d.*, t.path AS path FROM downloads d LEFT JOIN tracks t ON t.id = d.track_id ORDER BY CASE d.status WHEN 'downloading' THEN 0 WHEN 'saving' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, d.updated_at DESC LIMIT 300`).all()
 }
 
 /** The library track for a Deezer song, if you have it. */

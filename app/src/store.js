@@ -2,6 +2,7 @@
 // source's state. The player has its own store (player.js).
 import { create } from 'zustand'
 import { api } from './api'
+import { scanFiles } from './native'
 
 let toastSeq = 0
 export const useApp = create((set, get) => ({
@@ -49,10 +50,15 @@ export const useApp = create((set, get) => ({
 
 // Downloads are watched while any runs (quickly) or now and then.
 let pollTimer = null
+let seenDone = null
 export function watchDownloads() {
   if (pollTimer) return
   const tick = async () => {
     const list = await useApp.getState().refreshDownloads()
+    // New songs: tell Android, so other music apps see them too.
+    const done = list.filter(d => d.status === 'done' && d.path)
+    if (seenDone) { const fresh = done.filter(d => !seenDone.has(d.id)).map(d => d.path); if (fresh.length) scanFiles(fresh) }
+    seenDone = new Set(done.map(d => d.id))
     const busy = list.some(d => ['queued', 'downloading', 'saving'].includes(d.status))
     pollTimer = setTimeout(tick, busy ? 800 : 5000)
   }

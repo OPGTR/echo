@@ -72,6 +72,9 @@ export async function pickFolder() {
   const r = await EchoNative.pickFolder()
   return r?.path || null
 }
+export async function scanFiles(paths) {
+  if (isNative && paths.length) await EchoNative.scanFiles({ paths }).catch(() => {})
+}
 export async function openUrl(url) {
   if (!isNative) { window.open(url, '_blank', 'noopener'); return }
   await EchoNative.openUrl({ url })
