@@ -10,7 +10,12 @@ const library = require('./library')
 const deezer = require('./deezer')
 const downloads = require('./downloads')
 const sources = require('./sources')
-const { forYou, songKey } = require('./foryou')
+const { forYou, songKey, topArtists, customMix } = require('./foryou')
+const playlists = require('./playlists')
+const follows = require('./follows')
+const lyrics = require('./lyrics')
+const updates = require('./update')
+const http = require('http')
 const { version } = require('./version')
 
 const TOKEN = process.env.ECHO_TOKEN || crypto.randomBytes(24).toString('hex')
@@ -49,6 +54,8 @@ function createApp() {
     download_dir: getSetting('download_dir'),
     download_dir_used: getSetting('download_dir_used') || downloadDirs(getSetting('download_dir'))[0],
     download_quality: getSetting('download_quality'),
+    quality_tier: getSetting('quality_tier') || 'cd',
+    mix_era: getSetting('mix_era') || 'both',
     onboarded: getSetting('onboarded') === '1',
     platform,
   })
@@ -59,7 +66,18 @@ function createApp() {
     if ('download_dir' in b) setSetting('download_dir', b.download_dir && path.isAbsolute(b.download_dir) ? b.download_dir : null)
     if ('download_quality' in b) setSetting('download_quality', b.download_quality || null)
     if ('onboarded' in b) setSetting('onboarded', b.onboarded ? '1' : '0')
+    if (['hires', 'cd', 'lossy'].includes(b.quality_tier)) setSetting('quality_tier', b.quality_tier)
+    if (['recent', 'old', 'both'].includes(b.mix_era)) setSetting('mix_era', b.mix_era)
     return settingsView()
+  }))
+  // The interface's own choices (theme, start page, sections, equalizer…).
+  app.get('/api/prefs', wrap(() => getJSON('prefs', {})))
+  app.put('/api/prefs', wrap(req => {
+    const next = { ...getJSON('prefs', {}), ...(req.body && typeof req.body === 'object' ? req.body : {}) }
+    const text = JSON.stringify(next)
+    if (text.length > 200000) throw Object.assign(new Error('too large'), { status: 413 })
+    setSetting('prefs', text)
+    return next
   }))
   app.post('/api/platform', wrap(req => { setPlatformDirs(req.body || {}); return settingsView() }))
 
@@ -110,7 +128,7 @@ function createApp() {
     }
     return converting.get(out)
   }
-  app.get('/api/stream/:id', async (req, res) => {
+  async function streamTrack(req, res) {
     const t = library.track(req.params.id)
     if (!t || !fs.existsSync(t.path)) return res.status(404).end()
     let file
@@ -130,13 +148,37 @@ function createApp() {
       res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': type, 'Accept-Ranges': 'bytes' })
       fs.createReadStream(file).pipe(res)
     }
-  })
-  app.get('/api/art/:id', (req, res) => {
+  }
+  function sendArt(req, res) {
     const t = library.track(req.params.id)
     if (!t?.art || !fs.existsSync(t.art)) return res.status(404).end()
     res.set('Cache-Control', 'private, max-age=86400')
     res.sendFile(t.art)
-  })
+  }
+  app.get('/api/stream/:id', streamTrack)
+  app.get('/api/art/:id', sendArt)
+
+  // Casting: a TV or a speaker on the Wi-Fi plays from a second, LAN-facing
+  // server that only serves audio and covers, with its own secret, and only
+  // while casting.
+  let cast = null
+  app.post('/api/cast/start', wrap(async req => {
+    const ip = String(req.body?.ip || '')
+    if (!/^(10|172|192)\.[\d.]+$/.test(ip)) throw Object.assign(new Error('no Wi-Fi address'), { status: 400 })
+    if (!cast) {
+      const secret = crypto.randomBytes(16).toString('hex')
+      const lan = express()
+      lan.use((rq, rs, next) => { rs.set('Access-Control-Allow-Origin', '*'); next() })
+      lan.get(`/c/${secret}/stream/:id`, streamTrack)
+      lan.get(`/c/${secret}/art/:id`, sendArt)
+      lan.use((rq, rs) => rs.status(404).end())
+      const server = http.createServer(lan)
+      await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '0.0.0.0', resolve) })
+      cast = { server, secret }
+    }
+    return { base: `http://${ip}:${cast.server.address().port}/c/${cast.secret}` }
+  }))
+  app.post('/api/cast/stop', wrap(() => { if (cast) { cast.server.close(); cast = null } return { ok: true } }))
 
   // --------------------------------------------------- catalogue + for you
   // Songs from the catalogue you already have get their library id.
@@ -163,7 +205,49 @@ function createApp() {
     return { library: local, catalogue, offline }
   }))
   app.get('/api/catalogue/album/:id', wrap(async req => { const a = await deezer.album(req.params.id); markOwned(a.tracks); return a }))
-  app.get('/api/catalogue/artist/:id', wrap(async req => { const a = await deezer.artist(req.params.id); markOwned(a.top); return a }))
+  app.get('/api/catalogue/artist/:id', wrap(async req => { const a = await deezer.artist(req.params.id); markOwned(a.top); return { ...a, followed: follows.isFollowed(a.id) } }))
+  app.get('/api/foryou/era', wrap(() => ({ era: getSetting('mix_era') || 'both' })))
+
+  // ------------------------------------------------------------ playlists
+  const withOwned = pl => { if (pl?.tracks) markOwned(pl.tracks); return pl }
+  app.get('/api/playlists', wrap(() => playlists.list()))
+  app.post('/api/playlists', wrap(req => { const pl = playlists.create({ name: req.body?.name }); return req.body?.tracks?.length ? withOwned(playlists.addItems(pl.id, req.body.tracks)) : pl }))
+  app.put('/api/playlists/order', wrap(req => playlists.arrange(req.body?.ids)))
+  app.post('/api/playlists/import', wrap(async req => withOwned(await playlists.importLink(String(req.body?.url || '').trim(), { name: req.body?.name }))))
+  app.get('/api/playlists/:id', wrap(req => withOwned(playlists.get(req.params.id))))
+  app.put('/api/playlists/:id', wrap(req => withOwned(playlists.update(req.params.id, req.body || {}))))
+  app.delete('/api/playlists/:id', wrap(req => playlists.remove(req.params.id)))
+  app.post('/api/playlists/:id/items', wrap(req => withOwned(playlists.addItems(req.params.id, req.body?.tracks || []))))
+  app.delete('/api/playlists/:id/items/:item', wrap(req => withOwned(playlists.removeItem(req.params.id, Number(req.params.item)))))
+  app.put('/api/playlists/:id/items', wrap(req => withOwned(playlists.reorder(req.params.id, (req.body?.ids || []).map(Number)))))
+
+  // ---------------------------------------------------------------- mixes
+  app.get('/api/mixes/artists', wrap(async () => {
+    const top = topArtists(16)
+    const found = await Promise.all(top.map(async a => { try { const d = await deezer.findArtist(a.name); return d ? { ...deezer.artistOf(d), score: Math.round(a.score) } : { id: null, name: a.name, picture: null, score: Math.round(a.score) } } catch { return { id: null, name: a.name, picture: null, score: Math.round(a.score) } } }))
+    return found
+  }))
+  app.post('/api/mixes/custom', wrap(async req => {
+    const era = ['recent', 'old', 'both'].includes(req.body?.era) ? req.body.era : 'both'
+    const mix = await customMix(Array.isArray(req.body?.artists) ? req.body.artists : [], { era })
+    const name = `Ton mix · ${mix.artists.map(a => a.name).join(' + ')}`
+    const pl = playlists.create({ name, kind: 'mix', meta: { artists: mix.artists, era } })
+    return withOwned(playlists.addItems(pl.id, mix.tracks))
+  }))
+
+  // -------------------------------------------------------------- follows
+  app.get('/api/follows', wrap(async req => { await follows.refresh({ force: req.query.force === '1' }).catch(() => {}); return follows.list() }))
+  app.post('/api/follows', wrap(req => follows.follow(req.body || {})))
+  app.delete('/api/follows/:id', wrap(req => follows.unfollow(req.params.id)))
+  app.post('/api/follows/:id/seen', wrap(req => follows.seen(req.params.id)))
+
+  // --------------------------------------------------------------- lyrics
+  app.get('/api/lyrics', wrap(req => lyrics.find({ title: String(req.query.title || ''), artist: String(req.query.artist || ''), album: String(req.query.album || ''), duration: Number(req.query.duration) || null })))
+
+  // -------------------------------------------------------------- updates
+  app.get('/api/update', wrap(req => updates.check({ build: Number(req.query.build) || 0, force: req.query.force === '1' })))
+  app.post('/api/update/download', wrap(req => updates.download({ abi: req.body?.abi, build: Number(req.body?.build) || 0 })))
+  app.get('/api/update/status', wrap(() => updates.status()))
   app.get('/api/catalogue/find-artist', wrap(async req => { const a = await deezer.findArtist(String(req.query.name || '')); return a ? deezer.artistOf(a) : null }))
 
   // ----------------------------------------------------------- downloads
@@ -176,7 +260,11 @@ function createApp() {
   // -------------------------------------------------------------- source
   app.get('/api/source', wrap(() => sources.state()))
   app.post('/api/source/install', wrap(() => sources.installDeezer()))
-  app.post('/api/source/verify-info', wrap(() => sources.verifyInfo()))
+  app.post('/api/source/verify-info', wrap(req => sources.verifyInfo(req.body?.id)))
+  app.get('/api/sources', wrap(() => sources.state()))
+  app.post('/api/sources/:id/install', wrap(req => sources.install(req.params.id)))
+  app.post('/api/sources/:id/enabled', wrap(req => sources.setEnabled(req.params.id, !!req.body?.enabled)))
+  app.put('/api/sources/order', wrap(req => sources.setOrder(req.body?.ids)))
   // Tests: install an addon package directly.
   if (process.env.ECHO_DEV === '1') app.post('/api/source/upload', wrap(async req => sources.service().install({ buffer: Buffer.from(String(req.body?.data || ''), 'base64') })))
   app.post('/api/source/verify-complete', wrap(req => sources.verifyComplete(req.body || {})))

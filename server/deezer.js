@@ -58,7 +58,7 @@ function artistOf(a) {
   return { id: String(a.id), name: a.name, picture: a.picture_xl || a.picture_big || a.picture_medium || null, fans: a.nb_fan || null }
 }
 function albumOf(a) {
-  return { id: String(a.id), title: a.title, artist: a.artist?.name || '', cover: cover(a), year: a.release_date ? Number(String(a.release_date).slice(0, 4)) : null, type: a.record_type || null, tracks: a.nb_tracks || null }
+  return { id: String(a.id), title: a.title, artist: a.artist?.name || '', cover: cover(a), year: a.release_date ? Number(String(a.release_date).slice(0, 4)) : null, release_date: a.release_date || null, type: a.record_type || null, tracks: a.nb_tracks || null }
 }
 
 async function search(q, { limit = 25 } = {}) {
@@ -100,5 +100,8 @@ const related = id => get(`/artist/${id}/related?limit=12`).then(list)
 const topTracks = id => get(`/artist/${id}/top?limit=10`).then(list)
 const chart = () => get('/chart/0/tracks?limit=50').then(list)
 const trackInfo = id => get(`/track/${encodeURIComponent(id)}`)
+/** An artist's releases, newest first. */
+const artistAlbums = (id, opts) => get(`/artist/${encodeURIComponent(id)}/albums?limit=100`, opts).then(r => list(r).map(albumOf).sort((x, y) => String(y.release_date || '').localeCompare(String(x.release_date || ''))))
+const artistInfo = id => get(`/artist/${encodeURIComponent(id)}`).then(artistOf)
 
-module.exports = { get, setFetch, search, album, artist, findArtist, related, topTracks, chart, song, artistOf, albumOf, trackInfo }
+module.exports = { artistAlbums, artistInfo, get, setFetch, search, album, artist, findArtist, related, topTracks, chart, song, artistOf, albumOf, trackInfo }

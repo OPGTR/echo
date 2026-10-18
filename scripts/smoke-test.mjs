@@ -29,8 +29,13 @@ const artistsDb = {
 }
 const nameOf = id => Object.values(artistsDb).find(a => a.id === Number(id))?.name || `Related ${id}`
 const trackOf = (artistId, i) => ({ id: Number(artistId) * 100 + i, title: Number(artistId) === 27 && i === 0 ? 'One More Time' : `${nameOf(artistId)} song ${i}`, title_short: Number(artistId) === 27 && i === 0 ? 'One More Time' : `${nameOf(artistId)} song ${i}`, duration: 200 + i, artist: { id: Number(artistId), name: nameOf(artistId) }, album: { id: Number(artistId) * 10, title: `${nameOf(artistId)} Album`, cover_xl: null } })
+let newRelease = false
 const deezer = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x')
+  if (u.pathname === '/lrclib/get') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ syncedLyrics: '[00:01.00]Première ligne\n[00:02.50]Deuxième ligne', plainLyrics: 'Première ligne\nDeuxième ligne' })) }
+  if (u.pathname === '/release') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ body: 'Notes', assets: [{ name: 'Echo-0.0.2.5-arm64-v8a.apk', size: 4, browser_download_url: `http://127.0.0.1:${deezer.address().port}/apk` }, { name: 'network-report.txt', size: 1 }] })) }
+  if (u.pathname === '/apk') { res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': 4 }); return res.end('PK\u0003\u0004') }
+  if (u.pathname === '/playlist/555') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ id: 555, title: 'Ma playlist Deezer', tracks: { data: [trackOf(27, 1), trackOf(27, 2)] } })) }
   const send = v => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(v)) }
   const q = (u.searchParams.get('q') || '').toLowerCase()
   let m
@@ -39,7 +44,7 @@ const deezer = http.createServer((req, res) => {
   if (u.pathname === '/search/album') return send({ data: [{ id: 270, title: 'Homework', artist: { name: 'Daft Punk' }, record_type: 'album', release_date: '1997-01-20' }] })
   if ((m = u.pathname.match(/^\/artist\/(\d+)\/related$/))) return send({ data: Array.from({ length: 12 }, (_, i) => ({ id: Number(m[1]) * 1000 + i, name: `Near ${m[1]}-${i}` })) })
   if ((m = u.pathname.match(/^\/artist\/(\d+)\/top$/))) return send({ data: Array.from({ length: 10 }, (_, i) => trackOf(m[1], i)) })
-  if ((m = u.pathname.match(/^\/artist\/(\d+)\/albums$/))) return send({ data: [{ id: 270, title: 'Homework', release_date: '1997-01-20', record_type: 'album' }] })
+  if ((m = u.pathname.match(/^\/artist\/(\d+)\/albums$/))) return send({ data: [{ id: 270, title: 'Homework', release_date: '1997-01-20', record_type: 'album' }, ...(newRelease ? [{ id: 2701, title: 'New Single', release_date: '2026-10-01', record_type: 'single' }] : [])] })
   if ((m = u.pathname.match(/^\/artist\/(\d+)$/))) return send({ id: Number(m[1]), name: nameOf(m[1]), nb_fan: 1000 })
   if ((m = u.pathname.match(/^\/album\/(\d+)$/))) return send({ id: 270, title: 'Homework', artist: { name: 'Daft Punk' }, release_date: '1997-01-20', tracks: { data: [{ ...trackOf(27, 5), id: 3135556, title: 'Around the World', title_short: 'Around the World' }, trackOf(27, 0)] } })
   if ((m = u.pathname.match(/^\/track\/(\d+)$/))) return send({ id: Number(m[1]), title: Number(m[1]) === 3135556 ? 'Around the World' : `Song ${m[1]}`, track_position: 7, disk_number: 1, release_date: '1997-01-20', isrc: 'GBDUW0000059', artist: { id: 27, name: 'Daft Punk' }, contributors: [{ name: 'Daft Punk' }], album: { id: 270, title: 'Homework', cover_xl: null } })
@@ -54,7 +59,7 @@ const PORT = 3600 + Math.floor(Math.random() * 300)
 const B = `http://127.0.0.1:${PORT}/api`
 let log = ''
 const server = spawn(nodeBin, ['-r', path.join(here, 'simulate-android.cjs'), path.join(root, 'www', 'nodejs', 'index.js')], {
-  env: { ...process.env, ECHO_DEV: '1', ECHO_PORT: String(PORT), ECHO_DATA_ROOT: path.join(tmp, 'app'), ECHO_DEEZER_API: DEEZER, ECHO_MUSIC_DIR: shared, ECHO_MEDIA_DIR: media, PATH: '/nonexistent' },
+  env: { ...process.env, ECHO_DEV: '1', ECHO_PORT: String(PORT), ECHO_DATA_ROOT: path.join(tmp, 'app'), ECHO_DEEZER_API: DEEZER, ECHO_LYRICS_API: `${DEEZER}/lrclib`, ECHO_RELEASE_API: `${DEEZER}/release`, ECHO_MUSIC_DIR: shared, ECHO_MEDIA_DIR: media, PATH: '/nonexistent' },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
 server.stdout.on('data', d => { log += d })
@@ -140,6 +145,88 @@ try {
   ok('a song the source lacks fails cleanly', failed?.status === 'error' && /not available/i.test(failed.error || ''), failed?.error)
   ok('retry', (await api(`/downloads/${bad.id}/retry`, {})).ok === true)
   ok('rescan keeps everything', (await (async () => { await api('/library/scan', {}); await until(async () => !(await api('/library/status')).scanning); return (await api('/library/stats')).tracks })()) === files + 2)
+
+  // ------------------------------------------------------ 0.0.2: downloads
+  const waitJob = async id => until(async () => { const j = (await api('/downloads')).find(d => d.id === id); return j && ['done', 'error'].includes(j.status) ? j : null }, 60000)
+  fs.rmSync(path.join(shared, 'Écho'), { force: true })
+  const [aacJob] = await api('/downloads', { items: [{ deezer_id: '777001', title: 'Song 777001', artist: 'Daft Punk' }] })
+  const aacDone = await waitJob(aacJob.id)
+  const aacTrack = aacDone?.track_id && await api(`/tracks/${aacDone.track_id}`)
+  ok('AAC sent as "audio.flac": probed, saved as .m4a, tagged, plays', aacDone?.status === 'done' && /aac|mp4a/i.test(aacTrack?.codec || '') && (await fetch(`${B}/stream/${aacDone.track_id}`)).ok, `${aacDone?.status} ${aacDone?.error || ''} ${aacTrack?.codec}`)
+  const savedAac = fs.readdirSync(shared, { recursive: true }).concat(fs.readdirSync(path.join(media, 'Music'), { recursive: true })).find(f => /777001\.m4a$/.test(f))
+  ok('the saved name follows the real format', !!savedAac, savedAac)
+
+  const upT = await api('/source/upload', { data: fs.readFileSync(path.join(here, 'fixtures', 'fake-tidal.sflx')).toString('base64') })
+  const srcs = await api('/sources')
+  ok('several sources: Deezer then Tidal', srcs.sources?.filter(x => x.installed).map(x => x.id).join() === 'deezer,tidal-web', JSON.stringify(upT).slice(0, 120))
+  const [chainJob] = await api('/downloads', { items: [{ deezer_id: '666123', title: 'Song 666123', artist: 'Daft Punk' }] })
+  const chainDone = await waitJob(chainJob.id)
+  ok('a song Deezer lacks comes from the next source (matched by title/artist)', chainDone?.status === 'done' && /Tidal/.test(chainDone.message || ''), `${chainDone?.status} ${chainDone?.message} ${chainDone?.error || ''}`)
+  const [both] = await api('/downloads', { items: [{ deezer_id: '666999', title: 'Song 666999', artist: 'Daft Punk' }] })
+  const bothFail = await waitJob(both.id)
+  ok('no source has it: one clear error naming each source', bothFail?.status === 'error' && /Deezer/.test(bothFail.error) && /Tidal/.test(bothFail.error), bothFail?.error)
+  const reordered = await api('/sources/order', { ids: ['tidal-web', 'deezer'] }, 'PUT')
+  ok('source order', reordered.sources?.[0]?.id === 'tidal-web')
+  await api('/sources/order', { ids: ['deezer', 'tidal-web'] }, 'PUT')
+  await api('/settings', { quality_tier: 'hires' }, 'PUT')
+  ok('quality preference', (await api('/settings')).quality_tier === 'hires')
+
+  // ----------------------------------------------------- 0.0.2: playlists
+  const pl = await api('/playlists', { name: 'Test', tracks: [{ local_id: by['One More Time'].id, title: 'One More Time', artist: 'Daft Punk' }, { deezer_id: '27002', title: 'Daft Punk song 2', artist: 'Daft Punk' }, { local_id: by['Formation'].id, title: 'Formation', artist: 'Beyoncé' }] })
+  let got = await api(`/playlists/${pl.id}`)
+  ok('playlist: create with songs', got.count === 3 && got.tracks.length === 3 && got.tracks[0].local_id === by['One More Time'].id)
+  got = await api(`/playlists/${pl.id}`, { sort: 'title', sort_dir: 'desc' }, 'PUT')
+  ok('playlist: sort by title, descending', got.tracks.map(t => t.title).join('|') === 'One More Time|Formation|Daft Punk song 2', got.tracks.map(t => t.title).join('|'))
+  got = await api(`/playlists/${pl.id}/items`, { ids: [got.tracks[2].item_id, got.tracks[0].item_id, got.tracks[1].item_id] }, 'PUT')
+  ok('playlist: custom order', got.sort === 'custom' && got.tracks[0].title === 'Daft Punk song 2', got.tracks.map(t => t.title).join('|'))
+  got = await api(`/playlists/${pl.id}/items/${got.tracks[0].item_id}`, null, 'DELETE')
+  ok('playlist: remove a song', got.count === 2)
+  const imp = await api('/playlists/import', { url: 'https://www.deezer.com/fr/playlist/555' })
+  ok('import a Deezer playlist link', imp.name === 'Ma playlist Deezer' && imp.count === 2 && imp.source === 'deezer', JSON.stringify(imp).slice(0, 160))
+  const badLink = await api('/playlists/import', { url: 'https://example.com/x' })
+  ok('a link from elsewhere is refused clearly', /Spotify|Deezer/.test(badLink.error || badLink.text || ''))
+  ok('playlists list', (await api('/playlists')).length === 2)
+  await api(`/playlists/${pl.id}`, null, 'DELETE')
+  ok('playlist: delete', (await api('/playlists')).length === 1)
+
+  // --------------------------------------------- 0.0.2: mixes, rediscover
+  const tops = await api('/mixes/artists')
+  ok('your artists for "Ton mix"', Array.isArray(tops) && tops.some(a => a.name === 'Daft Punk'))
+  const custom = await api('/mixes/custom', { artists: [{ id: '27', name: 'Daft Punk' }, { id: '145', name: 'Beyoncé' }], era: 'both' })
+  ok('"Ton mix" from 2 artists, kept as a playlist', custom.kind === 'mix' && custom.count >= 6, `${custom.count} ${custom.error || ''}`)
+  await api('/settings', { mix_era: 'recent' }, 'PUT')
+  const fyRecent = await api('/foryou')
+  ok('Pour toi with "recent" songs only (rebuilt, no crash)', fyRecent.era === 'recent' && Array.isArray(fyRecent.mixes), fyRecent.error)
+  ok('"À redécouvrir" list', Array.isArray(fyRecent.rediscover))
+  await api('/settings', { mix_era: 'both' }, 'PUT')
+
+  // -------------------------------------------------- 0.0.2: follows
+  let fol = await api('/follows', { id: '27' })
+  ok('follow an artist', fol.artists?.length === 1 && fol.artists[0].name === 'Daft Punk' && !fol.artists[0].new)
+  newRelease = true
+  fol = await api('/follows?force=1')
+  ok('a new release shows a dot', fol.unseen === 1 && fol.artists[0].new && fol.news[0]?.title === 'New Single', JSON.stringify(fol).slice(0, 200))
+  fol = await api('/follows/27/seen', {})
+  ok('seen: the dot goes', fol.unseen === 0)
+  ok('artist page knows it is followed', (await api('/catalogue/artist/27')).followed === true)
+
+  // ------------------------------------------- 0.0.2: lyrics, prefs, update, cast
+  const ly = await api('/lyrics?title=Formation&artist=Beyonc%C3%A9&duration=12')
+  ok('synced lyrics', ly.synced?.length === 2 && ly.synced[1].t === 2.5 && ly.synced[0].line === 'Première ligne', JSON.stringify(ly).slice(0, 160))
+  await api('/prefs', { theme: 'luce', startTab: 'playlists' }, 'PUT')
+  ok('interface preferences are kept', (await api('/prefs')).theme === 'luce')
+  const upd = await api('/update?build=3')
+  ok('a newer version is found', upd.available && upd.version === '0.0.2' && upd.build === 5 && !!upd.assets['arm64-v8a'], JSON.stringify(upd).slice(0, 160))
+  ok('no update when already on it', (await api('/update?build=5')).available === false)
+  await api('/update/download', { abi: 'arm64-v8a', build: 3 })
+  const updDone = await until(async () => { const st = await api('/update/status'); return st.state === 'ready' || st.state === 'error' ? st : null }, 20000)
+  ok('the update downloads', updDone?.state === 'ready' && fs.existsSync(updDone.file), JSON.stringify(updDone))
+  const castInfo = await api('/cast/start', { ip: '192.168.1.50' })
+  const castPort = Number(/:(\d+)\//.exec(castInfo.base || '')?.[1])
+  const castPath = (castInfo.base || '').replace(/^http:\/\/[^/]+/, '')
+  const castRes = castPort && await fetch(`http://127.0.0.1:${castPort}${castPath}/stream/${by['Formation'].id}`)
+  ok('casting: songs served on the Wi-Fi with their own secret', castRes?.ok && (await fetch(`http://127.0.0.1:${castPort}/c/wrong/stream/${by['Formation'].id}`)).status === 404, castInfo.base)
+  await api('/cast/stop', {})
 } catch (e) {
   ok('smoke test ran', false, e.stack)
 } finally {

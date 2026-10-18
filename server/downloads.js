@@ -19,6 +19,7 @@ const { downloadDirs } = require('./paths')
 const library = require('./library')
 const deezer = require('./deezer')
 const sources = require('./sources')
+const { sniff } = require('./platform/tools')
 
 const CONCURRENCY = 2
 const active = new Map() // job id -> AbortController
@@ -94,8 +95,8 @@ async function pump() {
       run(next, controller.signal)
         .catch(error => {
           if (controller.signal.aborted) return
-          const verify = /VERIFY_REQUIRED|verification|captcha|session/i.test(error?.message || '') || error?.needsVerification
-          update(next.id, { status: 'error', error: String(error?.message || error).slice(0, 500), message: verify ? 'verify' : null })
+          const verify = error?.needsVerification ?? /VERIFY_REQUIRED|verification|captcha|session/i.test(error?.message || '')
+          update(next.id, { status: 'error', error: String(error?.message || error).slice(0, 500), message: verify ? `verify:${error?.verifySource || ''}` : null })
         })
         .finally(() => { active.delete(next.id); setImmediate(pump) })
     }
@@ -192,9 +193,28 @@ function writeTags(file, meta, coverBytes) {
   } finally { try { f?.dispose() } catch {} }
 }
 
+/** One source's attempt: its id for the song, then the qualities in your order. */
+async function fromSource(source, j, meta, signal, onProgress) {
+  const id = source.id === 'deezer' ? `deezer:${j.deezer_id}` : await sources.findOn(source, meta)
+  if (!id) throw new Error('introuvable')
+  const wanted = getSetting('quality_tier') || 'cd'
+  let lastError = null
+  for (const quality of sources.qualityChoices(source, wanted)) {
+    try {
+      return await sources.service().download(source.key, id, { signal, quality, onProgress })
+    } catch (error) {
+      if (signal.aborted) throw error
+      lastError = error
+      // Only "this quality isn't there" is worth another quality.
+      if (!/quality|not available|unavailable|format|bitrate|lossless|hi-?res/i.test(error?.message || '')) break
+    }
+  }
+  throw lastError || new Error('download failed')
+}
+
 async function run(j, signal) {
-  const source = sources.downloadSource()
-  if (!source) throw new Error('NO_SOURCE')
+  const chain = sources.downloadChain()
+  if (!chain.length) throw new Error('NO_SOURCE')
   // Exactly that song's details from the catalogue.
   let info = null
   try { info = await deezer.trackInfo(j.deezer_id) } catch {}
@@ -209,25 +229,49 @@ async function run(j, signal) {
     disc_no: info?.disk_number || null,
     year: info?.release_date ? Number(String(info.release_date).slice(0, 4)) : null,
     isrc: info?.isrc || null,
+    duration: Number(info?.duration || j.duration) || null,
     cover: info?.album?.cover_xl || j.cover,
   }
-  let artifact
+  let artifact = null
+  let via = null
+  const errors = []
+  for (const source of chain) {
+    if (errors.length) update(j.id, { message: `try:${source.name}`, progress: 0 })
+    try {
+      artifact = await fromSource(source, j, meta, signal, u => { if (!signal.aborted && typeof u?.percent === 'number') update(j.id, { progress: Math.max(0, Math.min(99, u.percent)) }) })
+      via = source
+      break
+    } catch (error) {
+      if (signal.aborted) throw error
+      const verify = /VERIFY_REQUIRED|verification|captcha|session/i.test(error?.message || '') || error?.needsVerification
+      errors.push({ source: source.name, id: source.id, message: String(error?.message || error).slice(0, 200), verify })
+    }
+  }
+  if (!artifact) {
+    const err = new Error(errors.map(e => `${e.source} : ${e.message}`).join(' · '))
+    err.needsVerification = errors.length > 0 && errors.every(e => e.verify)
+    err.verifySource = errors.find(e => e.verify)?.id || null
+    throw err
+  }
   try {
-    artifact = await sources.service().download(source.key, `deezer:${j.deezer_id}`, {
-      signal,
-      quality: getSetting('download_quality') || undefined,
-      onProgress: u => { if (!signal.aborted && typeof u?.percent === 'number') update(j.id, { progress: Math.max(0, Math.min(99, u.percent)) }) },
-    })
     signal.throwIfAborted()
     update(j.id, { status: 'saving', progress: 99 })
-    // Tagged in the work folder (app storage), then saved.
-    writeTags(artifact.file, meta, await fetchBuffer(meta.cover, signal))
-    const ext = path.extname(artifact.file).toLowerCase() || '.flac'
+    // The file's real format, whatever its name says (an addon may write AAC
+    // into "audio.flac"): tags and the saved name follow the content.
+    let work = artifact.file
+    const kind = sniff(work)
+    if (kind && path.extname(work).toLowerCase() !== kind.ext) {
+      const fixed = work.replace(/\.[^./\\]*$/, '') + '-real' + kind.ext
+      await fsp.rename(work, fixed)
+      work = fixed
+    }
+    writeTags(work, meta, await fetchBuffer(meta.cover, signal))
+    const ext = path.extname(work).toLowerCase() || '.flac'
     const albumDir = safeName(meta.album || 'Singles', 'Singles')
     const name = `${meta.track_no ? String(meta.track_no).padStart(2, '0') + ' ' : ''}${safeName(meta.title, 'Titre')}${ext}`
-    const saved = await saveInto(artifact.file, path.join(safeName(meta.album_artist, 'Artiste'), albumDir, name))
+    const saved = await saveInto(work, path.join(safeName(meta.album_artist, 'Artiste'), albumDir, name))
     const { id } = await library.indexFile(saved, { deezerId: j.deezer_id })
-    update(j.id, { status: 'done', progress: 100, track_id: id, message: null, error: null })
+    update(j.id, { status: 'done', progress: 100, track_id: id, message: `via:${via.name}`, error: null })
     return id
   } finally {
     try { await artifact?.cleanup() } catch {}
