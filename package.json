@@ -1,7 +1,7 @@
 {
   "name": "echo",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.0.2",
   "description": "Écho: your music offline, songs downloaded in one tap, daily mixes from what you listen to. Android.",
   "license": "MIT",
   "scripts": {
@@ -16,7 +16,6 @@
     "@capacitor/android": "8.5.3",
     "@capacitor/app": "8.1.2",
     "@capacitor/core": "8.5.3",
-    "@capgo/capacitor-media-session": "8.1.4",
     "capacitor-nodejs": "https://github.com/hampoelz/capacitor-nodejs/releases/download/v1.0.0-beta.10/capacitor-nodejs.tgz",
     "lucide-react": "1.52.0",
     "react": "19.3.0",
