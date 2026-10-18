@@ -1,28 +1,56 @@
 // The player. A song is either yours (local_id: plays at once, offline) or
 // from the catalogue (deezer_id): then it's downloaded first and plays as soon
-// as it's in your library. The next two songs of the queue are downloaded
-// ahead, so a mix keeps going without waiting.
+// as it's in your library. In a mix, an album or a playlist the next two songs
+// are downloaded ahead so the music keeps going; a song picked from a search
+// is downloaded alone.
 import { create } from 'zustand'
 import { api, streamUrl, artUrl } from './api'
 import { useApp, pokeDownloads } from './store'
-import { mediaSession } from './native'
+import { engine, onEngine } from './engine'
+import { lanAddress, requestNotifications } from './native'
 import { t } from './i18n'
-
-const audio = new Audio()
-audio.preload = 'auto'
 
 export const keyOf = s => (s.local_id ? `l:${s.local_id}` : `d:${s.deezer_id}`)
 // Catalogue songs carry Deezer's cover; library songs their own art, when they have some.
 export const coverOf = s => s?.cover || (s?.local_id && s.has_art !== 0 && s.has_art !== false ? artUrl(s.local_id) : s?.cover_small || null)
 
+/** What the codec badge says: FLAC, ALAC, MP3, AAC… and whether it's lossless. */
+export function codecLabel(track) {
+  const c = String(track?.codec || '').toLowerCase()
+  if (!c) return null
+  if (/flac/.test(c)) return { label: 'FLAC', lossless: true, hires: (track.bits || 0) > 16 || (track.sample_rate || 0) > 48000 }
+  if (/alac/.test(c)) return { label: 'ALAC', lossless: true }
+  if (/pcm|wav/.test(c)) return { label: 'WAV', lossless: true }
+  if (/wavpack/.test(c)) return { label: 'WV', lossless: true }
+  if (/ape|monkey/.test(c)) return { label: 'APE', lossless: true }
+  if (/layer 3|mp3/.test(c)) return { label: 'MP3', lossless: false }
+  if (/aac|mp4a/.test(c)) return { label: 'AAC', lossless: false }
+  if (/opus/.test(c)) return { label: 'OPUS', lossless: false }
+  if (/vorbis/.test(c)) return { label: 'OGG', lossless: false }
+  return { label: c.toUpperCase().slice(0, 5), lossless: !!track.lossless }
+}
+/** The type Cast receivers need. Formats a TV can't decode arrive as FLAC. */
+function mimeOf(track) {
+  const c = String(track?.codec || '').toLowerCase()
+  if (/layer 3|mp3/.test(c)) return 'audio/mpeg'
+  if (/aac|mp4a/.test(c)) return 'audio/mp4'
+  if (/opus|vorbis/.test(c)) return 'audio/ogg'
+  if (/pcm|wav/.test(c) && !/be/.test(c)) return 'audio/wav'
+  return 'audio/flac'
+}
+
 export const usePlayer = create(() => ({
   queue: [], index: -1,
+  context: null, // where the queue comes from: 'search' plays only what you picked
   playing: false, // what the person wants
   loading: false, // fetching the song (downloading) or buffering
   position: 0, duration: 0,
   shuffle: false, repeat: 'off',
   liked: {}, // local id -> bool
+  details: {}, // local id -> track (codec, bits…)
   fullOpen: false,
+  failed: null, // { title, error } when a song couldn't be got
+  cast: { base: null, device: null, casting: false },
 }))
 const get = () => usePlayer.getState()
 const set = patch => usePlayer.setState(patch)
@@ -35,26 +63,41 @@ function flushListen() {
   if (listened.id && listened.seconds >= 10) api.played(listened.id, Math.round(listened.seconds)).catch(() => {})
   listened = { id: null, seconds: 0, last: null }
 }
-audio.addEventListener('timeupdate', () => {
-  const now = audio.currentTime
-  if (listened.last !== null && !audio.paused) {
-    const d = now - listened.last
-    if (d > 0 && d < 2) listened.seconds += d
+
+onEngine(e => {
+  if (e.type === 'time') {
+    const now = e.position || 0
+    if (listened.last !== null && get().playing) {
+      const d = now - listened.last
+      if (d > 0 && d < 2) listened.seconds += d
+    }
+    listened.last = now
+    set({ position: now, duration: e.duration || current()?.duration || 0 })
+  } else if (e.type === 'state') {
+    set({ loading: !!e.buffering, ...(e.playing ? { playing: true } : {}), ...(!e.wants && !e.buffering ? { playing: false } : {}) })
+  } else if (e.type === 'ended') {
+    next(true)
+  } else if (e.type === 'advanced') {
+    // The native player moved on to the song that was waiting.
+    flushListen()
+    const s = get()
+    const at = s.queue.findIndex((x, i) => i > s.index && x.local_id === e.id)
+    const index = at >= 0 ? at : s.index + 1
+    const song = s.queue[index]
+    set({ index, loading: false, position: 0, duration: song?.duration || 0 })
+    if (song?.local_id) { listened = { id: song.local_id, seconds: 0, last: 0 }; loadDetails(song.local_id) }
+    afterStart()
+  } else if (e.type === 'remote') {
+    if (e.action === 'next') next()
+    else if (e.action === 'previous') previous()
+  } else if (e.type === 'error') {
+    const song = current()
+    if (!song) return
+    set({ playing: false, loading: false })
+    useApp.getState().toast(t('« {title} » ne se lit pas.', { title: song.title }), { label: t('Suivant'), run: () => next() })
+  } else if (e.type === 'cast') {
+    set({ cast: { ...get().cast, casting: !!e.casting, device: e.casting ? get().cast.device : null } })
   }
-  listened.last = now
-  set({ position: now, duration: Number.isFinite(audio.duration) ? audio.duration : (current()?.duration || 0) })
-  if (Math.floor(now) % 2 === 0) mediaSession.position(audio.duration, now)
-})
-audio.addEventListener('seeked', () => { listened.last = audio.currentTime })
-audio.addEventListener('playing', () => { set({ loading: false }); mediaSession.state(true) })
-audio.addEventListener('waiting', () => set({ loading: true }))
-audio.addEventListener('pause', () => { if (!audio.ended) mediaSession.state(false) })
-audio.addEventListener('ended', () => next(true))
-audio.addEventListener('error', () => {
-  const song = current()
-  if (!audio.src || !song) return
-  useApp.getState().toast(t('« {title} » ne se lit pas. Titre suivant.', { title: song.title }))
-  next(true)
 })
 
 // ---------------------------------------------------------------- downloads
@@ -86,72 +129,109 @@ async function ensureLocal(song, isCurrent) {
 
 function markLocal(key, localId) {
   const { queue } = get()
-  set({ queue: queue.map(s => (keyOf(s) === key ? { ...s, local_id: localId, has_art: 1 } : s)) })
+  set({ queue: queue.map(s => (keyOf(s) === key ? { ...s, local_id: localId, has_art: s.cover ? s.has_art : 1 } : s)) })
 }
 
-/** Gets the next songs ready while this one plays. */
+/** In a mix, an album or a playlist: the next songs are got ready meanwhile. */
 function prefetch() {
-  const { queue, index } = get()
+  const { queue, index, context } = get()
+  if (context === 'search') return
   const ahead = queue.slice(index + 1, index + 3).filter(s => !s.local_id && s.deezer_id)
   if (!ahead.length || !useApp.getState().source?.installed) return
   api.download(ahead).then(jobs => {
     jobs.forEach((job, i) => { if (job?.track_id) markLocal(keyOf(ahead[i]), job.track_id) })
     pokeDownloads()
+    queueNextInEngine()
   }).catch(() => {})
+}
+
+async function loadDetails(id) {
+  if (get().details[id] && id in get().liked) return get().details[id]
+  try {
+    const tr = await api.track(id)
+    set({ details: { ...get().details, [id]: tr }, liked: { ...get().liked, [id]: !!tr.liked } })
+    return tr
+  } catch { return null }
+}
+
+/** What the engine plays for a song of yours. */
+async function itemFor(song) {
+  if (!song?.local_id) return null
+  const tr = get().details[song.local_id] || await loadDetails(song.local_id)
+  const base = get().cast.base
+  return {
+    id: song.local_id,
+    url: streamUrl(song.local_id),
+    castUrl: base ? `${base}/stream/${encodeURIComponent(song.local_id)}` : null,
+    mime: mimeOf(tr),
+    title: song.title || tr?.title || '',
+    artist: song.artist || tr?.artist || '',
+    album: song.album || tr?.album || '',
+    artwork: coverOf({ ...song, has_art: tr ? tr.has_art : song.has_art }),
+    castArtwork: song.cover || (base && tr?.has_art ? `${base}/art/${encodeURIComponent(song.local_id)}` : null),
+    duration: song.duration || tr?.duration || 0,
+  }
+}
+
+/** The song after this one, when it's on the phone: it follows without a gap. */
+async function queueNextInEngine() {
+  const s = get()
+  if (s.index < 0 || s.repeat === 'one') return
+  const following = s.repeat === 'all' && s.index + 1 >= s.queue.length ? s.queue[0] : s.queue[s.index + 1]
+  engine.setNext(following?.local_id ? await itemFor(following) : null)
+}
+
+function afterStart() {
+  prefetch()
+  queueNextInEngine()
+  saveSession()
+  useApp.getState().libraryChanged()
 }
 
 // ------------------------------------------------------------------ playing
 let generation = 0
+let askedNotifications = false
 
-async function playAt(index, { autoplay = true } = {}) {
+async function playAt(index, { autoplay = true, position = 0 } = {}) {
   const { queue } = get()
   if (index < 0 || index >= queue.length) return
   flushListen()
   const gen = ++generation
   const isCurrent = () => gen === generation
   const song = queue[index]
-  audio.pause()
-  set({ index, playing: autoplay, loading: true, position: 0, duration: song.duration || 0 })
-  mediaSession.metadata({ title: song.title, artist: song.artist, album: song.album || '', artwork: coverOf(song) })
+  if (!askedNotifications) { askedNotifications = true; requestNotifications() }
+  set({ index, playing: autoplay, loading: true, position: 0, duration: song.duration || 0, failed: null })
   let localId
   try {
     localId = await ensureLocal(song, isCurrent)
   } catch (error) {
     if (!isCurrent()) return
-    set({ loading: false })
+    // Stop here: never jump to another song on your behalf.
+    set({ loading: false, playing: false, failed: { title: song.title, error: error.message } })
     const app = useApp.getState()
     if (error.code === 'NO_SOURCE') {
-      set({ playing: false })
-      app.toast(t('Pour télécharger ce titre, installe d’abord la source Deezer (Réglages).'), { label: t('Réglages'), run: () => app.open({ type: 'settings' }) })
+      app.toast(t('Pour télécharger ce titre, installe d’abord une source (Réglages).'), { label: t('Réglages'), run: () => app.open({ type: 'sources' }) })
       return
     }
-    if (/verif|captcha|VERIFY|session/i.test(error.message)) {
-      set({ playing: false })
-      app.toast(t('La source Deezer demande une vérification.'), { label: t('Vérifier'), run: () => app.open({ type: 'settings', verify: true }) })
+    if (error.job?.message?.startsWith('verify') || /verif|captcha|VERIFY/i.test(error.message)) {
+      app.toast(t('La source demande une vérification.'), { label: t('Vérifier'), run: () => app.open({ type: 'sources', verify: true }) })
       return
     }
-    app.toast(t('« {title} » n’a pas pu être téléchargé : {error}', { title: song.title, error: error.message }))
-    if (index + 1 < get().queue.length) playAt(index + 1, { autoplay })
-    else set({ playing: false })
+    app.toast(t('« {title} » n’a pas pu être téléchargé.', { title: song.title }), { label: t('Réessayer'), run: () => playAt(index, { autoplay: true }) })
     return
   }
   if (!isCurrent() || !localId) return
   markLocal(keyOf(song), localId)
-  useApp.getState().libraryChanged()
   listened = { id: localId, seconds: 0, last: 0 }
-  audio.src = streamUrl(localId)
-  const updated = get().queue[index]
-  mediaSession.metadata({ title: updated.title, artist: updated.artist, album: updated.album || '', artwork: coverOf(updated) })
-  loadLiked(localId)
-  if (get().playing) audio.play().catch(() => set({ playing: false, loading: false }))
-  else set({ loading: false })
-  prefetch()
-  saveSession()
-}
-
-async function loadLiked(id) {
-  if (id in get().liked) return
-  try { const tr = await api.track(id); set({ liked: { ...get().liked, [id]: !!tr.liked } }) } catch {}
+  const item = await itemFor(get().queue[index])
+  if (!isCurrent()) return
+  try {
+    await engine.load(item, null, { play: get().playing, position })
+    if (!get().playing) set({ loading: false })
+  } catch {
+    set({ playing: false, loading: false })
+  }
+  afterStart()
 }
 
 function shuffled(list, keepFirst) {
@@ -160,60 +240,65 @@ function shuffled(list, keepFirst) {
   return keepFirst >= 0 ? [list[keepFirst], ...rest] : rest
 }
 
-/** Plays `songs` from `start` (or shuffled). */
-export function playList(songs, start = 0, { shuffle = false } = {}) {
+/**
+ * Plays `songs` from `start` (or shuffled). `context`: 'search' (only what
+ * you picked is downloaded), anything else (mix, album, playlist…): the next
+ * songs are downloaded ahead.
+ */
+export function playList(songs, start = 0, { shuffle = false, context = 'list' } = {}) {
   const list = songs.filter(s => s && (s.local_id || s.deezer_id))
   if (!list.length) return
   const first = Math.max(0, Math.min(start, list.length - 1))
-  const queue = shuffle ? shuffled(list, start >= 0 && !shuffle ? first : -1) : list
-  set({ queue, shuffle, index: -1 })
+  const queue = shuffle ? shuffled(list, -1) : list
+  set({ queue, shuffle, index: -1, context })
   playAt(shuffle ? 0 : first)
 }
 
 export function toggle() {
   const s = get()
   if (s.index < 0) { if (s.queue.length) playAt(0); return }
-  if (s.playing) { audio.pause(); set({ playing: false }) }
-  else if (audio.src) { set({ playing: true }); audio.play().catch(() => set({ playing: false })) }
-  else playAt(s.index)
+  if (s.failed) { playAt(s.index); return }
+  if (s.playing) { engine.pause(); set({ playing: false }) }
+  else if (listened.id) { set({ playing: true }); engine.play() }
+  else playAt(s.index, { position: s.position })
 }
 
 export function next(auto = false) {
   const s = get()
-  if (auto && s.repeat === 'one' && audio.src) { audio.currentTime = 0; audio.play().catch(() => {}); return }
+  if (auto && s.repeat === 'one') { engine.seek(0); engine.play(); return }
   if (s.index + 1 < s.queue.length) playAt(s.index + 1, { autoplay: s.playing || auto })
   else if (s.repeat === 'all' && s.queue.length) playAt(0, { autoplay: true })
-  else if (auto) { flushListen(); set({ playing: false }); mediaSession.state(false) }
+  else if (auto) { flushListen(); set({ playing: false }) }
 }
 
 export function previous() {
   const s = get()
-  if (audio.currentTime > 4 || s.index <= 0) { audio.currentTime = 0; return }
+  if (s.position > 4 || s.index <= 0) { engine.seek(0); set({ position: 0 }); return }
   playAt(s.index - 1, { autoplay: s.playing })
 }
 
-export function seek(seconds) { if (audio.src && Number.isFinite(seconds)) { audio.currentTime = Math.max(0, seconds); set({ position: audio.currentTime }) } }
+export function seek(seconds) { if (Number.isFinite(seconds)) { engine.seek(seconds); set({ position: Math.max(0, seconds) }) } }
 export function jumpTo(index) { playAt(index, { autoplay: true }) }
 
 export function playNext(songs) {
   const s = get()
   const add = songs.filter(x => x && (x.local_id || x.deezer_id))
   if (s.index < 0) { playList(add, 0); return }
-  const queue = [...s.queue.slice(0, s.index + 1), ...add, ...s.queue.slice(s.index + 1)]
-  set({ queue })
-  prefetch()
+  set({ queue: [...s.queue.slice(0, s.index + 1), ...add, ...s.queue.slice(s.index + 1)], context: s.context === 'search' ? 'list' : s.context })
+  prefetch(); queueNextInEngine()
 }
 export function addToQueue(songs) {
   const s = get()
   const add = songs.filter(x => x && (x.local_id || x.deezer_id))
   if (s.index < 0) { playList(add, 0); return }
-  set({ queue: [...s.queue, ...add] })
-  prefetch()
+  set({ queue: [...s.queue, ...add], context: s.context === 'search' ? 'list' : s.context })
+  prefetch(); queueNextInEngine()
 }
 export function removeFromQueue(i) {
   const s = get()
   if (i === s.index) return
   set({ queue: s.queue.filter((_, k) => k !== i), index: i < s.index ? s.index - 1 : s.index })
+  queueNextInEngine()
 }
 
 export function toggleShuffle() {
@@ -222,10 +307,12 @@ export function toggleShuffle() {
   const done = s.queue.slice(0, s.index + 1)
   const rest = s.queue.slice(s.index + 1)
   set({ shuffle: !s.shuffle, queue: [...done, ...(s.shuffle ? rest : shuffled(rest, -1))] })
+  queueNextInEngine()
 }
 export function cycleRepeat() {
   const order = ['off', 'all', 'one']
   set({ repeat: order[(order.indexOf(get().repeat) + 1) % order.length] })
+  queueNextInEngine()
 }
 
 export async function toggleLike(localId) {
@@ -237,37 +324,56 @@ export async function toggleLike(localId) {
 
 export const openFull = open => set({ fullOpen: open })
 
-// ------------------------------------------------------------- media keys
-mediaSession.actions({
-  play: () => { if (!get().playing) toggle() },
-  pause: () => { if (get().playing) toggle() },
-  nexttrack: () => next(),
-  previoustrack: () => previous(),
-  seekto: d => seek(Number(d.seekTime ?? d.seek_time ?? 0)),
-  stop: () => { audio.pause(); set({ playing: false }) },
-})
+// ------------------------------------------------------------------ casting
+/** Devices on the Wi-Fi (TV, Google Nest…). Scanning runs while the sheet is open. */
+export async function castScan(on) { return engine.castScan(on) }
+
+export async function castTo(device) {
+  const app = useApp.getState()
+  try {
+    // The TV fetches the music from the phone over the Wi-Fi.
+    if (!get().cast.base) {
+      const { ip } = await lanAddress()
+      if (!ip) throw new Error(t('Connecte le téléphone au Wi-Fi pour diffuser.'))
+      const { base } = await api.castStart(ip)
+      set({ cast: { ...get().cast, base } })
+    }
+    set({ cast: { ...get().cast, device } })
+    const s = get()
+    const song = current()
+    if (song?.local_id) {
+      const item = await itemFor(song)
+      await engine.load(item, null, { play: s.playing, position: engine.position })
+      queueNextInEngine()
+    }
+    await engine.castConnect(device.id)
+  } catch (e) {
+    app.toast(e.message || String(e))
+  }
+}
+export async function stopCasting() {
+  await engine.castDisconnect()
+  set({ cast: { ...get().cast, device: null, casting: false } })
+}
+
+// ---------------------------------------------------------------- equalizer
+export function applyEqualizer(eq) { engine.setEqualizer(eq || { enabled: false }) }
 
 // ---------------------------------------------------- the last session back
 const SESSION = 'echo-session'
 function saveSession() {
   try {
     const s = get()
-    localStorage.setItem(SESSION, JSON.stringify({ queue: s.queue.slice(0, 300), index: s.index, shuffle: s.shuffle, repeat: s.repeat }))
+    localStorage.setItem(SESSION, JSON.stringify({ queue: s.queue.slice(0, 300), index: s.index, shuffle: s.shuffle, repeat: s.repeat, context: s.context, position: s.position }))
   } catch {}
 }
 export function restoreSession() {
   try {
     const saved = JSON.parse(localStorage.getItem(SESSION) || 'null')
     if (!saved?.queue?.length || saved.index < 0) return
-    set({ queue: saved.queue, shuffle: !!saved.shuffle, repeat: saved.repeat || 'off', index: -1 })
     const song = saved.queue[saved.index]
-    if (song?.local_id) {
-      set({ index: saved.index, duration: song.duration || 0 })
-      audio.src = streamUrl(song.local_id)
-      listened = { id: song.local_id, seconds: 0, last: 0 }
-      mediaSession.metadata({ title: song.title, artist: song.artist, album: song.album || '', artwork: coverOf(song) })
-      loadLiked(song.local_id)
-    }
+    set({ queue: saved.queue, shuffle: !!saved.shuffle, repeat: saved.repeat || 'off', context: saved.context || 'list', index: song?.local_id ? saved.index : -1, position: saved.position || 0, duration: song?.duration || 0, playing: false })
+    if (song?.local_id) loadDetails(song.local_id)
   } catch {}
 }
 window.addEventListener('pagehide', () => { flushListen(); saveSession() })

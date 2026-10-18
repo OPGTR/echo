@@ -4,7 +4,7 @@
 //   ◔ arc     downloading
 //   ◎ pulse   playing now
 import React from 'react'
-import { MoreVertical, Music2, Play, ListPlus, ListEnd, Download, User, Disc3, Trash2, Heart } from 'lucide-react'
+import { MoreVertical, Music2, Play, ListPlus, ListEnd, Download, User, Disc3, Trash2, Heart, ListMusic, Plus, MinusCircle } from 'lucide-react'
 import { useApp } from '../store'
 import { usePlayer, keyOf, coverOf, playNext, addToQueue, toggleLike, playList } from '../player'
 import { api } from '../api'
@@ -43,12 +43,14 @@ export function Cover({ song, className = 'cover', size }) {
 }
 
 /** The song's menu (the ⋮ button, or a long press). */
-export function songMenu(song) {
+export function songMenu(song, { playlistId = null, onChanged = null } = {}) {
   const app = useApp.getState()
   const items = [
     { label: t('Lire ensuite'), icon: ListPlus, onSelect: () => playNext([song]) },
     { label: t('Ajouter à la file'), icon: ListEnd, onSelect: () => addToQueue([song]) },
+    { label: t('Ajouter à une playlist'), icon: ListMusic, onSelect: () => addToPlaylistMenu([song]) },
   ]
+  if (playlistId && song.item_id) items.push({ label: t('Retirer de la playlist'), icon: MinusCircle, onSelect: async () => { await api.removeFromPlaylist(playlistId, song.item_id); onChanged?.() } })
   if (song.local_id) {
     const liked = usePlayer.getState().liked[song.local_id] ?? !!song.liked
     items.push({ label: liked ? t('Retirer des titres aimés') : t('Ajouter aux titres aimés'), icon: Heart, onSelect: () => toggleLike(song.local_id) })
@@ -59,6 +61,28 @@ export function songMenu(song) {
   else if (song.local_id && song.album) items.push({ label: t('Aller à l’album'), icon: Disc3, onSelect: () => app.open({ type: 'album', album: song.album, artist: song.album_artist || song.artist }) })
   if (song.local_id) items.push({ label: t('Supprimer du téléphone'), icon: Trash2, danger: true, onSelect: async () => { const r = await api.remove(song.local_id).catch(e => ({ error: e.message })); if (r?.error) app.toast(r.error); app.libraryChanged() } })
   app.showSheet({ title: song.title, subtitle: song.artist, items })
+}
+
+/** Which playlist? (or a new one) */
+export async function addToPlaylistMenu(songs) {
+  const app = useApp.getState()
+  let lists = []
+  try { lists = (await api.playlists()).filter(p => p.kind !== 'mix') } catch {}
+  const add = async pl => {
+    try { await api.addToPlaylist(pl.id, songs); app.toast(t('Ajouté à « {name} ».', { name: pl.name })) } catch (e) { app.toast(e.message) }
+  }
+  app.showSheet({
+    title: t('Ajouter à une playlist'),
+    subtitle: songs.length === 1 ? `${songs[0].title} · ${songs[0].artist}` : t('{n} titres', { n: songs.length }),
+    items: [
+      { label: t('Nouvelle playlist'), icon: Plus, onSelect: async () => {
+        const name = window.prompt(t('Nom de la playlist'), '')
+        if (name === null) return
+        try { const pl = await api.createPlaylist(name || t('Nouvelle playlist'), songs); app.toast(t('Playlist « {name} » créée.', { name: pl.name })) } catch (e) { app.toast(e.message) }
+      } },
+      ...lists.map(pl => ({ label: pl.name, icon: ListMusic, hint: String(pl.count), onSelect: () => add(pl) })),
+    ],
+  })
 }
 
 export function goToArtist(song) {
@@ -72,25 +96,26 @@ export async function downloadSongs(songs) {
   const wanted = songs.filter(s => !s.local_id && s.deezer_id)
   if (!wanted.length) { app.toast(t('Tu as déjà tous ces titres.')); return }
   const source = app.source || await app.refreshSource()
-  if (!source?.installed) { app.toast(t('Pour télécharger ce titre, installe d’abord la source Deezer (Réglages).'), { label: t('Réglages'), run: () => app.open({ type: 'settings' }) }); return }
+  if (!source?.installed) { app.toast(t('Pour télécharger ce titre, installe d’abord une source (Réglages).'), { label: t('Réglages'), run: () => app.open({ type: 'sources' }) }); return }
   await api.download(wanted)
   const { pokeDownloads } = await import('../store')
   pokeDownloads()
   app.toast(t('{n} titres ajoutés aux téléchargements.', { n: wanted.length }), { label: t('Téléchargements'), run: () => app.open({ type: 'downloads' }) })
 }
 
-export function TrackRow({ song, onPlay, number = null, showCover = true }) {
+export function TrackRow({ song, onPlay, number = null, showCover = true, menu = null }) {
   const isCurrent = usePlayer(s => { const c = s.queue[s.index]; return !!c && keyOf(c) === keyOf(song) })
   const job = useApp(s => (!song.local_id && song.deezer_id ? s.downloads.find(d => d.deezer_id === String(song.deezer_id) && ['queued', 'downloading', 'saving'].includes(d.status)) : null))
   let pressTimer = null
-  const startPress = () => { pressTimer = setTimeout(() => { pressTimer = 'fired'; songMenu(song) }, 480) }
+  const openMenu = () => (menu ? menu(song) : songMenu(song))
+  const startPress = () => { pressTimer = setTimeout(() => { pressTimer = 'fired'; openMenu() }, 480) }
   const endPress = () => { if (pressTimer && pressTimer !== 'fired') clearTimeout(pressTimer) }
   return (
     <div className="row">
       <button type="button" className={`track ${isCurrent ? 'current' : ''}`}
         onClick={() => { if (pressTimer === 'fired') { pressTimer = null; return } onPlay?.() }}
         onTouchStart={startPress} onTouchEnd={endPress} onTouchMove={endPress}
-        onContextMenu={e => { e.preventDefault(); songMenu(song) }}>
+        onContextMenu={e => { e.preventDefault(); openMenu() }}>
         {number !== null && <span className="track-num">{number}</span>}
         {showCover && <Cover song={song} />}
         <span className="text">
@@ -99,17 +124,17 @@ export function TrackRow({ song, onPlay, number = null, showCover = true }) {
         </span>
         <span className="state"><StateMark song={song} progress={job ? (job.status === 'queued' ? 0 : job.progress) : null} /></span>
       </button>
-      <button type="button" className="more" aria-label={t('Plus')} onClick={() => songMenu(song)}><MoreVertical size={18} /></button>
+      <button type="button" className="more" aria-label={t('Plus')} onClick={openMenu}><MoreVertical size={18} /></button>
     </div>
   )
 }
 
-export function TrackList({ songs, context, numbered = false, showCover = true, onPlayAt }) {
+export function TrackList({ songs, context = 'list', numbered = false, showCover = true, onPlayAt, menu }) {
   return (
     <div className="tracks">
       {songs.map((song, i) => (
-        <TrackRow key={`${keyOf(song)}-${i}`} song={song} number={numbered ? (song.track_no || i + 1) : null} showCover={showCover}
-          onPlay={() => (onPlayAt ? onPlayAt(i) : playList(songs, i))} />
+        <TrackRow key={`${keyOf(song)}-${i}`} song={song} number={numbered ? (song.track_no || i + 1) : null} showCover={showCover} menu={menu}
+          onPlay={() => (onPlayAt ? onPlayAt(i) : context === 'search' ? playList([song], 0, { context }) : playList(songs, i, { context }))} />
       ))}
     </div>
   )

@@ -1,7 +1,7 @@
 // Search: your library first, then Deezer's catalogue (songs, artists,
 // albums). A song you don't have downloads when you play it.
 import React, { useEffect, useRef, useState } from 'react'
-import { Search as SearchIcon, X, Loader2, User } from 'lucide-react'
+import { Search as SearchIcon, X, Loader2, User, UserPlus, UserCheck } from 'lucide-react'
 import { api } from '../api'
 import { useApp } from '../store'
 import { playList } from '../player'
@@ -61,7 +61,7 @@ export default function Search() {
       {cat.tracks.length > 0 && (
         <section className="section">
           <h2>{t('Titres')}</h2>
-          <TrackList songs={cat.tracks} />
+          <TrackList songs={cat.tracks} context="search" />
         </section>
       )}
       {cat.artists.length > 0 && (
@@ -140,6 +140,15 @@ export function CatalogueArtist({ id }) {
         <div className="btn-row">
           <button type="button" className="btn primary" onClick={() => playList(artist.top, 0)}>{t('Lire')}</button>
           <button type="button" className="btn quiet" onClick={() => playList(artist.top, 0, { shuffle: true })}>{t('Lecture aléatoire')}</button>
+          <button type="button" className={`btn ${artist.followed ? 'quiet' : 'quiet'}`} aria-pressed={!!artist.followed} onClick={async () => {
+            const app = useApp.getState()
+            try {
+              const f = artist.followed ? await api.unfollow(artist.id) : await api.follow({ id: artist.id, name: artist.name, picture: artist.picture })
+              useApp.setState({ follows: f })
+              setArtist({ ...artist, followed: !artist.followed })
+              app.toast(artist.followed ? t('Tu ne suis plus {name}.', { name: artist.name }) : t('Tu suis {name} : ses nouveautés apparaîtront dans Bibliothèque › Suivis.', { name: artist.name }))
+            } catch (e) { app.toast(e.message) }
+          }}>{artist.followed ? <><UserCheck size={18} />{t('Suivi')}</> : <><UserPlus size={18} />{t('Suivre')}</>}</button>
         </div>
       </div>
       {artist.top.length > 0 && <section className="section"><h2>{t('Titres populaires')}</h2><TrackList songs={artist.top.slice(0, 10)} /></section>}

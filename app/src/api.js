@@ -53,9 +53,45 @@ export const api = {
   retryDownload: id => call(`/downloads/${encodeURIComponent(id)}/retry`, { method: 'POST', body: {} }),
   clearDownloads: () => call('/downloads', { method: 'DELETE' }),
 
+  prefs: () => call('/prefs'),
+  savePrefs: body => call('/prefs', { method: 'PUT', body }),
+
+  playlists: () => call('/playlists'),
+  playlist: id => call(`/playlists/${encodeURIComponent(id)}`),
+  createPlaylist: (name, tracks = []) => call('/playlists', { method: 'POST', body: { name, tracks } }),
+  updatePlaylist: (id, body) => call(`/playlists/${encodeURIComponent(id)}`, { method: 'PUT', body }),
+  deletePlaylist: id => call(`/playlists/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  arrangePlaylists: ids => call('/playlists/order', { method: 'PUT', body: { ids } }),
+  addToPlaylist: (id, tracks) => call(`/playlists/${encodeURIComponent(id)}/items`, { method: 'POST', body: { tracks } }),
+  removeFromPlaylist: (id, itemId) => call(`/playlists/${encodeURIComponent(id)}/items/${itemId}`, { method: 'DELETE' }),
+  reorderPlaylist: (id, ids) => call(`/playlists/${encodeURIComponent(id)}/items`, { method: 'PUT', body: { ids } }),
+  importPlaylist: url => call('/playlists/import', { method: 'POST', body: { url } }),
+
+  mixArtists: () => call('/mixes/artists'),
+  customMix: (artists, era) => call('/mixes/custom', { method: 'POST', body: { artists, era } }),
+
+  follows: (force = false) => call(`/follows${q({ force })}`),
+  follow: artist => call('/follows', { method: 'POST', body: artist }),
+  unfollow: id => call(`/follows/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  followSeen: id => call(`/follows/${encodeURIComponent(id)}/seen`, { method: 'POST', body: {} }),
+
+  lyrics: song => call(`/lyrics${q({ title: song.title, artist: song.artist, album: song.album, duration: Math.round(song.duration || 0) || undefined })}`),
+
+  update: (build, force = false) => call(`/update${q({ build, force })}`),
+  downloadUpdate: (abi, build) => call('/update/download', { method: 'POST', body: { abi, build } }),
+  updateStatus: () => call('/update/status'),
+
+  castStart: ip => call('/cast/start', { method: 'POST', body: { ip } }),
+  castStop: () => call('/cast/stop', { method: 'POST', body: {} }),
+
+  sources: () => call('/sources'),
+  installSourceId: id => call(`/sources/${encodeURIComponent(id)}/install`, { method: 'POST', body: {} }),
+  enableSource: (id, enabled) => call(`/sources/${encodeURIComponent(id)}/enabled`, { method: 'POST', body: { enabled } }),
+  orderSources: ids => call('/sources/order', { method: 'PUT', body: { ids } }),
+
   source: () => call('/source'),
   installSource: () => call('/source/install', { method: 'POST', body: {} }),
-  verifyInfo: () => call('/source/verify-info', { method: 'POST', body: {} }),
+  verifyInfo: id => call('/source/verify-info', { method: 'POST', body: { id } }),
   verifyComplete: body => call('/source/verify-complete', { method: 'POST', body }),
 }
 

@@ -4,6 +4,16 @@ import { create } from 'zustand'
 import { api } from './api'
 import { scanFiles } from './native'
 
+export const DEFAULT_PREFS = {
+  theme: 'indigo', // indigo | glass | luce | material | fixed
+  accent: '#f2c14e', // the fixed color
+  icon: 'Default',
+  startTab: 'home',
+  sections: { daily: true, custom: true, rediscover: true, discover: true, resume: true, added: true, chart: true },
+  eq: { enabled: false, preset: 'flat', bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0 },
+  audioTest: null, // { limit: Hz, at, recommended }
+}
+
 let toastSeq = 0
 export const useApp = create((set, get) => ({
   tab: 'home',
@@ -13,6 +23,18 @@ export const useApp = create((set, get) => ({
   downloads: [],
   source: null,
   libraryVersion: 0,
+  prefs: DEFAULT_PREFS,
+  follows: { artists: [], news: [], unseen: 0 },
+  update: null, // { available, version, build, assets }
+  appBuild: 0,
+
+  setPrefs: patch => {
+    const prefs = { ...get().prefs, ...patch }
+    set({ prefs })
+    api.savePrefs(patch).catch(() => {})
+    return prefs
+  },
+  refreshFollows: async (force = false) => { try { const follows = await api.follows(force); set({ follows }); return follows } catch { return get().follows } },
 
   setTab: tab => set({ tab, stack: [] }),
   open: screen => set(s => ({ stack: [...s.stack, screen] })),
@@ -20,7 +42,8 @@ export const useApp = create((set, get) => ({
     const s = get()
     if (s.sheet) { set({ sheet: null }); return true }
     if (s.stack.length) { set({ stack: s.stack.slice(0, -1) }); return true }
-    if (s.tab !== 'home') { set({ tab: 'home' }); return true }
+    const start = s.prefs.startTab || 'home'
+    if (s.tab !== start) { set({ tab: start }); return true }
     return false
   },
   showSheet: sheet => set({ sheet }),

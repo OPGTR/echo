@@ -1,4 +1,4 @@
-// Downloads, Settings, the first-run steps and the start-up screen.
+// Downloads, setting up a source, the first-run steps and the start-up screen.
 import React, { useEffect, useState } from 'react'
 import { Loader2, RotateCcw, X, FolderPlus, Check, AlertCircle } from 'lucide-react'
 import { api } from '../api'
@@ -6,7 +6,7 @@ import { useApp, pokeDownloads } from '../store'
 import { playList } from '../player'
 import { Cover, StateMark } from '../components/Track'
 import Back from '../components/Back'
-import { pickFolder, requestMusicAccess, musicAccess, openAppSettings, verifyWindow, storagePaths } from '../native'
+import { pickFolder, requestMusicAccess, openAppSettings, verifyWindow, storagePaths } from '../native'
 import { t } from '../i18n'
 import { version } from '../version'
 
@@ -14,7 +14,9 @@ import { version } from '../version'
 export function Downloads() {
   const downloads = useApp(s => s.downloads)
   useEffect(() => { pokeDownloads() }, [])
-  const label = d => ({ queued: t('En file'), downloading: `${t('Téléchargement…')} ${Math.round(d.progress || 0)} %`, saving: t('Enregistrement…'), done: t('Terminé'), error: t('Échec'), cancelled: t('Annulé') }[d.status])
+  const via = d => (d.message?.startsWith('via:') ? ` · ${t('via {s}', { s: d.message.slice(4) })}` : '')
+  const trying = d => (d.message?.startsWith('try:') ? ` · ${t('essai avec {s}', { s: d.message.slice(4) })}` : '')
+  const label = d => ({ queued: t('En file'), downloading: `${t('Téléchargement…')} ${Math.round(d.progress || 0)} %${trying(d)}`, saving: t('Enregistrement…'), done: `${t('Terminé')}${via(d)}`, error: t('Échec'), cancelled: t('Annulé') }[d.status])
   return (
     <div className="page">
       <Back>{downloads.some(d => ['done', 'error', 'cancelled'].includes(d.status)) && <button type="button" className="btn quiet small" onClick={async () => { await api.clearDownloads(); pokeDownloads() }}>{t('Effacer les terminés')}</button>}</Back>
@@ -42,105 +44,25 @@ export function Downloads() {
   )
 }
 
-// ------------------------------------------------------------- the source
-/** Installs the Deezer source if needed, then runs its one-time check. */
-export async function setUpSource({ install = true } = {}) {
+// ------------------------------------------------------------- sources
+/** Installs a source if needed (Deezer by default), then runs its one-time check. */
+export async function setUpSource({ install = true, id = 'deezer' } = {}) {
   const app = useApp.getState()
-  let source = await app.refreshSource()
-  if (!source?.installed) {
-    if (!install) return source
-    source = await api.installSource()
-    useApp.setState({ source })
+  let state = await api.sources()
+  let src = state.sources.find(x => x.id === id)
+  if (!src?.installed) {
+    if (!install) return state
+    state = await api.installSourceId(id)
+    src = state.sources.find(x => x.id === id)
   }
-  if (source.ready) return source
-  const info = await api.verifyInfo()
-  if (info?.authenticated) return app.refreshSource()
-  if (info?.url) {
+  if (src?.ready) { app.refreshSource(); return state }
+  const info = await api.verifyInfo(id)
+  if (info?.url && !info?.authenticated) {
     const result = await verifyWindow({ url: info.url, callback: info.callback, domains: info.domains || [] })
-    await api.verifyComplete({ url: result?.url || null, cookies: result?.cookies || [] })
+    await api.verifyComplete({ id, url: result?.url || null, cookies: result?.cookies || [] })
   }
-  return app.refreshSource()
-}
-
-function SourceSetting({ autoVerify = false }) {
-  const source = useApp(s => s.source)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const run = async (install) => {
-    setBusy(true); setError('')
-    try { await setUpSource({ install }) } catch (e) { setError(e.message) } finally { setBusy(false) }
-  }
-  useEffect(() => { useApp.getState().refreshSource().then(s => { if (autoVerify && s?.installed && !s.ready) run(false) }) }, [])
-  const text = !source?.installed ? t('Pas encore installée.') : source.ready ? t('Installée, prête.') : t('Installée. Elle demande une vérification rapide avant le premier téléchargement.')
-  return (
-    <div className="setting">
-      <h3>{t('Source de téléchargement')}</h3>
-      <p className="note">{t('Extension Deezer (SpotiFLAC)')}{source?.version ? ` ${source.version}` : ''}</p>
-      <div className="status-line">{source?.ready ? <Check size={18} color="var(--sodium)" /> : <AlertCircle size={18} color="var(--muted)" />}<span>{text}</span></div>
-      {error && <p className="note" style={{ color: 'var(--danger)', marginTop: 8 }}>{error}</p>}
-      <div className="btn-row">
-        {!source?.installed && <button type="button" className="btn primary" disabled={busy} onClick={() => run(true)}>{busy ? <Loader2 size={18} className="spin" /> : null}{t('Installer')}</button>}
-        {source?.installed && !source.ready && <button type="button" className="btn primary" disabled={busy} onClick={() => run(false)}>{busy ? <Loader2 size={18} className="spin" /> : null}{t('Vérifier maintenant')}</button>}
-        {source?.installed && <button type="button" className="btn quiet small" disabled={busy} onClick={async () => { setBusy(true); try { useApp.setState({ source: await api.installSource() }) } catch (e) { setError(e.message) } finally { setBusy(false) } }}>{t('Mettre à jour')}</button>}
-      </div>
-    </div>
-  )
-}
-
-// --------------------------------------------------------------- settings
-export function Settings({ verify = false }) {
-  const [settings, setSettings] = useState(null)
-  const [scan, setScan] = useState(null)
-  const libraryChanged = useApp(s => s.libraryChanged)
-  useEffect(() => { api.settings().then(setSettings).catch(() => {}) }, [])
-  useEffect(() => {
-    if (!scan?.scanning) return undefined
-    const timer = setInterval(async () => {
-      const s = await api.scanStatus().catch(() => null)
-      if (s) setScan(s)
-      if (s && !s.scanning) { clearInterval(timer); libraryChanged() }
-    }, 700)
-    return () => clearInterval(timer)
-  }, [scan?.scanning])
-
-  const folders = settings?.music_folders || []
-  const saveFolders = async list => { const s = await api.saveSettings({ music_folders: list }); setSettings(s); setScan(await api.scan()) }
-  const add = async () => { const f = await pickFolder(); if (f && !folders.includes(f)) saveFolders([...folders, f]) }
-
-  return (
-    <div className="page">
-      <Back />
-      <div className="page-head" style={{ paddingTop: 0 }}><h1>{t('Réglages')}</h1></div>
-
-      <div className="setting">
-        <h3>{t('Dossiers de musique')}</h3>
-        <p className="note">{t('Écho lit les fichiers audio de ces dossiers.')}</p>
-        {folders.map(f => (
-          <div className="folder" key={f}>
-            <span>{f}</span>
-            <button type="button" className="btn quiet small" onClick={() => saveFolders(folders.filter(x => x !== f))}>{t('Retirer')}</button>
-          </div>
-        ))}
-        <div className="btn-row">
-          <button type="button" className="btn quiet" onClick={add}><FolderPlus size={18} />{t('Ajouter un dossier')}</button>
-          <button type="button" className="btn quiet" disabled={scan?.scanning} onClick={async () => setScan(await api.scan())}>{scan?.scanning ? <Loader2 size={18} className="spin" /> : <RotateCcw size={18} />}{t('Relire la bibliothèque')}</button>
-        </div>
-        {scan?.scanning && <p className="note" style={{ marginTop: 8 }}>{t('Lecture du dossier… {done}/{total}', { done: scan.done, total: scan.total || '…' })}</p>}
-      </div>
-
-      <SourceSetting autoVerify={verify} />
-
-      <div className="setting">
-        <h3>{t('Les téléchargements vont dans')}</h3>
-        <p className="note" style={{ overflowWrap: 'anywhere' }}>{settings?.download_dir_used || '…'}</p>
-      </div>
-
-      <div className="setting" style={{ borderBottom: 0 }}>
-        <h3>{t('À propos')}</h3>
-        <p className="note">{t('Écho {v}. Moteur de téléchargement adapté de Lokal (MIT).', { v: version })}</p>
-      </div>
-    </div>
-  )
+  await app.refreshSource()
+  return api.sources()
 }
 
 // ----------------------------------------------------------- first run
