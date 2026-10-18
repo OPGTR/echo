@@ -1,6 +1,6 @@
 # Écho
 
-Un lecteur de musique Android 100 % sur le téléphone :
+Lecteur de musique Android :
 
 - **Ta musique hors ligne** : Écho lit les fichiers audio de tes dossiers (FLAC, MP3, AAC/M4A, ALAC, Opus, OGG, WAV…), avec pochettes, albums, artistes, titres aimés.
 - **Des découvertes** : chaque jour, des mixes faits avec ce que tu écoutes (y compris tes fichiers locaux) et un mix « Découvertes » d'artistes proches que tu n'as pas encore.
