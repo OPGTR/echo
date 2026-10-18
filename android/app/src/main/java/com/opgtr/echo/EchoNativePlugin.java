@@ -2,6 +2,7 @@ package com.opgtr.echo;
 
 import android.Manifest;
 import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -292,9 +293,132 @@ public class EchoNativePlugin extends Plugin {
         try {
             PackageInfo pkg = getContext().getPackageManager().getPackageInfo(getContext().getPackageName(), 0);
             info.put("version", pkg.versionName);
+            info.put("build", Build.VERSION.SDK_INT >= 28 ? pkg.getLongVersionCode() : pkg.versionCode);
         } catch (PackageManager.NameNotFoundException ignored) {}
         info.put("sdk", Build.VERSION.SDK_INT);
+        info.put("abi", Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "arm64-v8a");
         call.resolve(info);
+    }
+
+    // ------------------------------------------------------- Material You
+    /** The phone's wallpaper colors (Android 12+), for the Material You theme. */
+    @PluginMethod
+    public void dynamicColors(PluginCall call) {
+        JSObject out = new JSObject();
+        if (Build.VERSION.SDK_INT < 31) { out.put("available", false); call.resolve(out); return; }
+        android.content.res.Resources r = getContext().getResources();
+        int[][] ids = {
+            {android.R.color.system_accent1_100, android.R.color.system_accent1_200, android.R.color.system_accent1_300, android.R.color.system_accent1_500, android.R.color.system_accent1_800},
+            {android.R.color.system_accent2_200, android.R.color.system_accent2_700, android.R.color.system_accent2_800},
+            {android.R.color.system_neutral1_50, android.R.color.system_neutral1_200, android.R.color.system_neutral1_700, android.R.color.system_neutral1_800, android.R.color.system_neutral1_900},
+        };
+        String[][] names = {{"a100", "a200", "a300", "a500", "a800"}, {"b200", "b700", "b800"}, {"n50", "n200", "n700", "n800", "n900"}};
+        for (int g = 0; g < ids.length; g++) for (int i = 0; i < ids[g].length; i++) {
+            out.put(names[g][i], String.format("#%06X", 0xFFFFFF & r.getColor(ids[g][i], null)));
+        }
+        out.put("available", true);
+        call.resolve(out);
+    }
+
+    // ------------------------------------------------------------ icons
+    private static final String[] ICONS = {"Default", "Luce", "Glass"};
+
+    /** Switches the launcher icon between Écho's built-in ones. */
+    @PluginMethod
+    public void setIcon(PluginCall call) {
+        String name = call.getString("name", "Default");
+        PackageManager pm = getContext().getPackageManager();
+        String pkg = getContext().getPackageName();
+        for (String icon : ICONS) {
+            ComponentName c = new ComponentName(pkg, pkg + ".Icon" + icon);
+            pm.setComponentEnabledSetting(c, icon.equals(name) ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED : PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
+        }
+        call.resolve();
+    }
+
+    /** Puts a shortcut with your own picture on the home screen (it opens Écho). */
+    @PluginMethod
+    public void pinShortcut(PluginCall call) {
+        String data = call.getString("image");
+        String label = call.getString("label", "Écho");
+        if (data == null) { call.reject("no image"); return; }
+        try {
+            String b64 = data.contains(",") ? data.substring(data.indexOf(',') + 1) : data;
+            byte[] bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
+            android.graphics.Bitmap src = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            if (src == null) { call.reject("not an image"); return; }
+            // Adaptive icons show the middle 66 %: the picture fills that, centred.
+            int size = 432;
+            android.graphics.Bitmap canvasBmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888);
+            android.graphics.Canvas canvas = new android.graphics.Canvas(canvasBmp);
+            int side = Math.min(src.getWidth(), src.getHeight());
+            android.graphics.Rect from = new android.graphics.Rect((src.getWidth() - side) / 2, (src.getHeight() - side) / 2, (src.getWidth() + side) / 2, (src.getHeight() + side) / 2);
+            canvas.drawBitmap(src, from, new android.graphics.Rect(0, 0, size, size), new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG));
+            Intent open = new Intent(getContext(), MainActivity.class).setAction(Intent.ACTION_MAIN);
+            androidx.core.content.pm.ShortcutInfoCompat info = new androidx.core.content.pm.ShortcutInfoCompat.Builder(getContext(), "echo-custom-" + System.currentTimeMillis())
+                .setShortLabel(label)
+                .setIcon(androidx.core.graphics.drawable.IconCompat.createWithAdaptiveBitmap(canvasBmp))
+                .setIntent(open)
+                .build();
+            boolean ok = androidx.core.content.pm.ShortcutManagerCompat.isRequestPinShortcutSupported(getContext())
+                && androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(getContext(), info, null);
+            JSObject out = new JSObject();
+            out.put("requested", ok);
+            call.resolve(out);
+        } catch (Exception e) {
+            call.reject(e.getMessage());
+        }
+    }
+
+    // ---------------------------------------------------------- updates
+    /** Hands a downloaded APK to Android's installer. */
+    @PluginMethod
+    public void installApk(PluginCall call) {
+        String path = call.getString("path");
+        File file = path == null ? null : new File(path);
+        if (file == null || !file.isFile()) { call.reject("file missing"); return; }
+        if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
+            Intent allow = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName()));
+            allow.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(allow);
+            JSObject out = new JSObject();
+            out.put("needsPermission", true);
+            call.resolve(out);
+            return;
+        }
+        Uri uri = androidx.core.content.FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", file);
+        Intent install = new Intent(Intent.ACTION_VIEW);
+        install.setDataAndType(uri, "application/vnd.android.package-archive");
+        install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        getContext().startActivity(install);
+        JSObject out = new JSObject();
+        out.put("needsPermission", false);
+        call.resolve(out);
+    }
+
+    // ------------------------------------------------------------ network
+    /** The phone's address on the Wi-Fi (for casting). */
+    @PluginMethod
+    public void lanAddress(PluginCall call) {
+        JSObject out = new JSObject();
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getContext().getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+            android.net.Network net = cm.getActiveNetwork();
+            android.net.LinkProperties lp = net != null ? cm.getLinkProperties(net) : null;
+            if (lp != null) for (android.net.LinkAddress a : lp.getLinkAddresses()) {
+                if (a.getAddress() instanceof java.net.Inet4Address && !a.getAddress().isLoopbackAddress()) { out.put("ip", a.getAddress().getHostAddress()); break; }
+            }
+        } catch (Exception ignored) {}
+        call.resolve(out);
+    }
+
+    @PluginMethod
+    public void requestNotifications(PluginCall call) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && getPermissionState("notifications") != PermissionState.GRANTED) {
+            requestPermissionForAlias("notifications", call, "onNotifications");
+            return;
+        }
+        call.resolve(accessState());
     }
 
     /** Restarts the app (its embedded Node.js can only start once per process). */

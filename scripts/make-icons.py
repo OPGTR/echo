@@ -8,7 +8,7 @@ RES = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'res')
 NIGHT = (26, 24, 56, 255)      # #1a1838
 SODIUM = (242, 193, 78)         # #f2c14e
 
-def rings(size, scale=1.0):
+def rings(size, scale=1.0, color=None):
     """The echo: a dot, then rings fading out. Drawn at 4x and reduced."""
     S = size * 4
     img = Image.new('RGBA', (S, S), (0, 0, 0, 0))
@@ -17,9 +17,9 @@ def rings(size, scale=1.0):
     unit = S * scale / 2
     for r, w, a in [(0.92, 0.075, 90), (0.68, 0.085, 160), (0.44, 0.095, 235)]:
         R = unit * r
-        d.ellipse((c - R, c - R, c + R, c + R), outline=SODIUM + (a,), width=max(1, int(unit * w)))
+        d.ellipse((c - R, c - R, c + R, c + R), outline=(color or SODIUM) + (a,), width=max(1, int(unit * w)))
     R = unit * 0.2
-    d.ellipse((c - R, c - R, c + R, c + R), fill=SODIUM + (255,))
+    d.ellipse((c - R, c - R, c + R, c + R), fill=(color or SODIUM) + (255,))
     return img.resize((size, size), Image.LANCZOS)
 
 def icon(size, round_=False):
@@ -49,6 +49,28 @@ for n in ('ic_launcher', 'ic_launcher_round'):
         f.write('<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n    <background android:drawable="@color/ic_launcher_background"/>\n    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n</adaptive-icon>\n')
 with open(os.path.join(RES, 'values', 'ic_launcher_background.xml'), 'w') as f:
     f.write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#1A1838</color>\n</resources>\n')
+
+# The other launcher icons you can pick in Settings (Luce, Liquid glass).
+def variant(size, bg, color, glass=False):
+    img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+    m = Image.new('L', (size * 4, size * 4), 0)
+    ImageDraw.Draw(m).rounded_rectangle((0, 0, size * 4 - 1, size * 4 - 1), radius=size * 4 * 0.22, fill=255)
+    base = Image.new('RGBA', (size, size), bg)
+    if glass:
+        g = Image.new('RGBA', (size, size))
+        gd = ImageDraw.Draw(g)
+        for y in range(size):
+            t = y / max(1, size - 1)
+            gd.line([(0, y), (size, y)], fill=(int(58 + (255 - 58) * t * 0.7), int(70 + (143 - 70) * t * 0.6), int(190 - 30 * t), 255))
+        base = g
+    img.paste(base, (0, 0), m.resize((size, size), Image.LANCZOS))
+    img.alpha_composite(rings(size, 0.74, color))
+    return img
+
+for name, k in densities.items():
+    d = os.path.join(RES, f'mipmap-{name}')
+    variant(int(48 * k), (17, 17, 17, 255), (242, 166, 90)).save(os.path.join(d, 'ic_launcher_luce.png'))
+    variant(int(48 * k), (39, 48, 126, 255), (255, 255, 255), glass=True).save(os.path.join(d, 'ic_launcher_glass.png'))
 
 # Splash (before Android 12): the rings centred on the night background.
 for folder, (w, h) in {'drawable': (480, 320), 'drawable-port-mdpi': (320, 480), 'drawable-port-hdpi': (480, 800), 'drawable-port-xhdpi': (720, 1280), 'drawable-port-xxhdpi': (960, 1600), 'drawable-port-xxxhdpi': (1280, 1920), 'drawable-land-mdpi': (480, 320), 'drawable-land-hdpi': (800, 480), 'drawable-land-xhdpi': (1280, 720), 'drawable-land-xxhdpi': (1600, 960), 'drawable-land-xxxhdpi': (1920, 1280)}.items():
