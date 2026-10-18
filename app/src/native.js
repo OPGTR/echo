@@ -102,42 +102,25 @@ export async function onResume(fn) {
   return () => handle.remove()
 }
 
-// ------------------------------------------------------------ media session
-// Lock screen, notification, headset and Bluetooth buttons; on the phone it
-// also keeps Écho playing in the background.
-let mediaPlugin = null
-async function media() {
-  if (!isNative) return null
-  if (!mediaPlugin) mediaPlugin = (await import('@capgo/capacitor-media-session')).MediaSession
-  return mediaPlugin
+// ------------------------------------------------------------- the phone
+export const EchoPlayer = registerPlugin('EchoPlayer')
+
+export async function appInfo() {
+  if (!isNative) return { version: 'web', build: 0, abi: 'arm64-v8a' }
+  try { return await EchoNative.appInfo() } catch { return { build: 0 } }
 }
-let lastState = null
-export const mediaSession = {
-  async metadata({ title, artist, album, artwork }) {
-    const m = await media()
-    if (m) return m.setMetadata({ title, artist, album, artwork: artwork ? [{ src: artwork, sizes: '512x512', type: 'image/jpeg' }] : [] }).catch(() => {})
-    if ('mediaSession' in navigator && window.MediaMetadata) navigator.mediaSession.metadata = new window.MediaMetadata({ title, artist, album, artwork: artwork ? [{ src: artwork, sizes: '512x512' }] : [] })
-  },
-  async state(playing) {
-    const value = playing === null ? 'none' : playing ? 'playing' : 'paused'
-    if (value === lastState) return
-    lastState = value
-    const m = await media()
-    if (m) return m.setPlaybackState({ playbackState: value }).catch(() => {})
-    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = value
-  },
-  async position(duration, position) {
-    if (!Number.isFinite(duration) || duration <= 0) return
-    const m = await media()
-    const state = { duration, position: Math.min(position || 0, duration), playbackRate: 1 }
-    if (m) return m.setPositionState(state).catch(() => {})
-    if ('mediaSession' in navigator && navigator.mediaSession.setPositionState) try { navigator.mediaSession.setPositionState(state) } catch {}
-  },
-  async actions(handlers) {
-    const m = await media()
-    for (const [action, handler] of Object.entries(handlers)) {
-      if (m) await m.setActionHandler({ action }, details => handler(details || {})).catch(() => {})
-      else if ('mediaSession' in navigator) try { navigator.mediaSession.setActionHandler(action, d => handler(d || {})) } catch {}
-    }
-  },
+export async function dynamicColors() {
+  if (!isNative) return { available: false }
+  try { return await EchoNative.dynamicColors() } catch { return { available: false } }
 }
+export async function setLauncherIcon(name) { if (isNative) await EchoNative.setIcon({ name }).catch(() => {}) }
+export async function pinShortcut(image, label = 'Écho') {
+  if (!isNative) return { requested: false }
+  return EchoNative.pinShortcut({ image, label })
+}
+export async function installApk(path) { return isNative ? EchoNative.installApk({ path }) : { needsPermission: false } }
+export async function lanAddress() {
+  if (!isNative) return { ip: '192.168.1.2' }
+  try { return await EchoNative.lanAddress() } catch { return {} }
+}
+export async function requestNotifications() { if (isNative) await EchoNative.requestNotifications().catch(() => {}) }

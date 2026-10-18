@@ -412,6 +412,23 @@ public class EchoNativePlugin extends Plugin {
         call.resolve(out);
     }
 
+    /** Where the sound goes now: bluetooth, wired, speaker (for the audio test). */
+    @PluginMethod
+    public void audioOutput(PluginCall call) {
+        JSObject out = new JSObject();
+        String type = "speaker";
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) getContext().getSystemService(android.content.Context.AUDIO_SERVICE);
+            for (android.media.AudioDeviceInfo d : am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)) {
+                int k = d.getType();
+                if (k == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || (Build.VERSION.SDK_INT >= 31 && (k == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET || k == android.media.AudioDeviceInfo.TYPE_BLE_SPEAKER))) { type = "bluetooth"; break; }
+                if (k == android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES || k == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET || k == android.media.AudioDeviceInfo.TYPE_USB_HEADSET) type = "wired";
+            }
+        } catch (Exception ignored) {}
+        out.put("type", type);
+        call.resolve(out);
+    }
+
     @PluginMethod
     public void requestNotifications(PluginCall call) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && getPermissionState("notifications") != PermissionState.GRANTED) {

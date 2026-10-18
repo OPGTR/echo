@@ -1,6 +1,6 @@
 // Your music: songs, albums, artists, liked. Everything here plays offline.
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Search as SearchIcon, Shuffle, Loader2, User, Disc3 } from 'lucide-react'
+import { Search as SearchIcon, Shuffle, Loader2, User, Disc3, Plus } from 'lucide-react'
 import { api, artUrl } from '../api'
 import { useApp } from '../store'
 import { playList } from '../player'
@@ -40,6 +40,7 @@ export default function Library() {
 
   useEffect(() => {
     let alive = true
+    if (view === 'follows') return undefined
     const timer = setTimeout(async () => {
       const q = filter.trim()
       const r = view === 'songs' ? await api.tracks({ sort, q, limit: 5000 })
@@ -55,13 +56,16 @@ export default function Library() {
   const [visibleSongs, songsMore] = useProgressive(songs)
   const [visibleRows, rowsMore] = useProgressive(view === 'albums' || view === 'artists' ? (rows || []) : [], 60)
 
-  const views = [['songs', 'Titres'], ['albums', 'Albums'], ['artists', 'Artistes'], ['liked', 'J’aime']]
+  const views = [['songs', 'Titres'], ['albums', 'Albums'], ['artists', 'Artistes'], ['follows', 'Suivis'], ['liked', 'J’aime']]
+  const unseen = useApp(s => s.follows.unseen)
   return (
     <div className="page">
       <div className="page-head"><h1>{t('Bibliothèque')}</h1><HeadActions /></div>
       <div className="segments" role="group" aria-label={t('Bibliothèque')}>
-        {views.map(([id, label]) => <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)}>{t(label)}</button>)}
+        {views.map(([id, label]) => <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)}>{t(label)}{id === 'follows' && unseen > 0 && <i className="seg-dot" />}</button>)}
       </div>
+      {view === 'follows' && <Follows />}
+      {view !== 'follows' && <>
       <div style={{ display: 'flex', gap: 10, marginTop: 14, alignItems: 'center' }}>
         <label className="field" style={{ flex: 1, minWidth: 0, height: 44 }}>
           <SearchIcon size={18} />
@@ -117,6 +121,43 @@ export default function Library() {
           {rowsMore}
         </section>
       )}
+      </>}
+    </div>
+  )
+}
+
+/** Artists you follow; a dot on those who released something new. */
+function Follows() {
+  const follows = useApp(s => s.follows)
+  const refresh = useApp(s => s.refreshFollows)
+  const open = useApp(s => s.open)
+  useEffect(() => { refresh(true) }, [])
+  const see = async a => { if (a.new) useApp.setState({ follows: await api.followSeen(a.id) }); open({ type: 'catalogue-artist', id: a.id }) }
+  return (
+    <div className="follows">
+      {follows.artists.length > 0 && <p className="note" style={{ marginTop: 16 }}>{t('Un point jaune : nouveau titre ou album depuis ta dernière visite.')}</p>}
+      <div className="who-grid">
+        {follows.artists.map(a => (
+          <button key={a.id} type="button" className="who" onClick={() => see(a)}>
+            <span className="face">{a.picture ? <img src={a.picture} alt="" loading="lazy" /> : <User size={30} />}{a.new && <i className="new-dot" />}</span>
+            <span className="name">{a.name}</span>
+            {a.new && a.latest && <span className="what">{t(a.latest.type === 'album' ? 'Nouvel album' : a.latest.type === 'ep' ? 'Nouvel EP' : 'Nouveau single')}</span>}
+          </button>
+        ))}
+        <button type="button" className="who" onClick={() => useApp.getState().setTab('search')}>
+          <span className="face add"><Plus size={28} /></span><span className="name" style={{ color: 'var(--muted)' }}>{t('Suivre')}</span>
+        </button>
+      </div>
+      {!follows.artists.length && <p className="note">{t('Suis un artiste depuis sa page (bouton Suivre) : ses nouveaux titres et albums apparaîtront ici.')}</p>}
+      {follows.news.length > 0 && <>
+        <h2 className="mini-h" style={{ fontSize: 20, color: 'var(--text)' }}>{t('Nouveautés')}</h2>
+        {follows.news.slice(0, 12).map(n => (
+          <button key={n.id} type="button" className="news-row" onClick={async () => { if (n.new) useApp.setState({ follows: await api.followSeen(n.artist_id) }); open({ type: 'catalogue-album', id: n.id }) }}>
+            {n.cover ? <img src={n.cover} alt="" loading="lazy" /> : <span className="ph" />}
+            <span className="text"><span className="title">{n.title}{n.new && <i className="inline-dot" />}</span><span className="sub">{[n.artist, t(n.type === 'album' ? 'album' : n.type === 'ep' ? 'EP' : 'single'), n.release_date ? new Date(n.release_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : null].filter(Boolean).join(' · ')}</span></span>
+          </button>
+        ))}
+      </>}
     </div>
   )
 }
