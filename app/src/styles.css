@@ -245,7 +245,6 @@ img { display: block; }
 .k-lines { flex: 1; overflow-y: auto; padding: 30vh 0; display: flex; flex-direction: column; gap: 18px; scrollbar-width: none; mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent); }
 .k-line { text-align: left; font-size: 27px; line-height: 1.25; font-weight: 750; letter-spacing: -.01em; color: color-mix(in srgb, var(--text) 32%, transparent); transition: color .2s, font-size .2s; }
 .k-line.past { color: color-mix(in srgb, var(--text) 45%, transparent); }
-.k-line.now { font-size: 32px; color: var(--text); background: linear-gradient(90deg, var(--sodium) var(--k, 0%), var(--text) var(--k, 0%)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 .k-plain { white-space: pre-line; font-size: 20px; line-height: 1.5; color: var(--muted); }
 .k-note { margin: 8px 0; text-align: center; color: var(--faint); font-size: 12.5px; }
 .k-controls { display: flex; justify-content: center; align-items: center; gap: 28px; margin-top: 8px; }
@@ -318,7 +317,7 @@ img { display: block; }
 .btn.wide { width: 100%; height: 52px; border-radius: 26px; font-size: 16px; }
 .btn.ghost { background: none; color: var(--muted); }
 .btn:disabled { opacity: .45; }
-.page.with-footer { padding-bottom: 100px; }
+.page.with-footer { padding-bottom: 0; }
 .page-footer { position: sticky; bottom: 0; margin: 22px -20px 0; padding: 14px 20px 18px; background: linear-gradient(transparent, var(--night) 30%); }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .chip { height: 34px; padding: 0 12px 0 14px; border-radius: 17px; background: var(--surface); font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
@@ -377,10 +376,10 @@ img { display: block; }
 .pv .dot, .pv .pill { right: 10px; bottom: 10px; width: 28px; height: 28px; border-radius: 50%; background: #f2c14e; }
 .pv .pill { width: 52px; border-radius: 15px; }
 .pv-indigo { background: #1a1838; }
-.pv-glass { background: #4a5bd6; }
-.pv-glass .blob.a { left: -20px; top: -10px; width: 90px; height: 90px; border-radius: 50%; background: #ff8fb1; filter: blur(14px); }
-.pv-glass .blob.b { right: -20px; bottom: -20px; width: 90px; height: 90px; border-radius: 50%; background: #48d1c0; filter: blur(14px); }
-.pv-glass .pane { left: 8px; right: 8px; bottom: 8px; height: 40px; border-radius: 12px; background: rgba(255, 255, 255, .28); border: 1px solid rgba(255, 255, 255, .55); }
+.pv-glass { background: #0e0e11; }
+.pv-glass .blob.a { left: 10px; top: 10px; width: 34px; height: 34px; border-radius: 9px; background: #ff8fb1; }
+.pv-glass .blob.b { left: 52px; top: 22px; width: 34px; height: 34px; border-radius: 9px; background: #48d1c0; }
+.pv-glass .pane { left: 8px; right: 8px; bottom: 8px; height: 40px; border-radius: 14px; background: rgba(255, 255, 255, .07); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, .2); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4); }
 .pv-luce { background: #111; }
 .pv-luce .card { left: 8px; right: 8px; top: 8px; height: 38px; border-radius: 12px; background: linear-gradient(#262626, #1c1c1c); border: 1px solid rgba(255, 255, 255, .08); }
 .pv-luce .lit { left: 8px; bottom: 8px; width: 62px; height: 34px; border-radius: 12px; background: #2a231d; border: 1.5px solid rgba(242, 166, 90, .5); box-shadow: 0 0 12px rgba(242, 166, 90, .2); }
@@ -457,38 +456,99 @@ img { display: block; }
 .bar-track { height: 6px; border-radius: 3px; background: var(--line); margin-top: 8px; overflow: hidden; }
 .bar-track i { display: block; height: 100%; background: var(--sodium); border-radius: 3px; transition: width .3s; }
 
+
+/* ================================================================== 0.1 */
+/* The cover takes the room left: the player always fits the screen. */
+.full .cover-wrap { flex: 1 1 0; min-height: 140px; display: grid; place-items: center; container-type: size; margin: 6px 0 14px; }
+.full .cover-wrap .cover-big { width: min(100cqw, 100cqh, 360px); height: auto; aspect-ratio: 1; margin: 0; }
+.full .device-row { margin-top: 14px; }
+.rediscover .track-num { display: none; }
+/* karaoke: the line being sung fills word by word */
+.k-line.now { font-size: 32px; color: color-mix(in srgb, var(--text) 55%, transparent); }
+.k-word { background: linear-gradient(90deg, var(--sodium) var(--k, 0%), var(--text) var(--k, 0%)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+/* menu lines with a second line, and the accent one ("Je n'aime pas") */
+.sheet-item .detail { display: block; font-size: 12.5px; color: var(--muted); margin-top: 1px; }
+.sheet-item:has(.detail) { height: auto; min-height: 56px; padding: 6px 0; }
+.sheet-item.accent { color: var(--sodium); }
+.sheet-item.accent svg { color: var(--sodium); }
+/* Écho's windows (a name, a color, a yes/no) */
+.dlg h3 { font-size: 20px; }
+.dlg-field { display: flex; align-items: center; height: 52px; margin-top: 14px; padding: 0 16px; border-radius: 16px; background: var(--surface); border: 2px solid var(--sodium); }
+.dlg-field input { flex: 1; min-width: 0; background: none; border: 0; outline: none; font-size: 17px; }
+.dlg-field input::placeholder { color: var(--faint); }
+.dlg-hint { color: var(--muted); font-size: 13px; margin-top: 8px; }
+.dlg-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px; }
+.dlg-actions .btn { height: 50px; border-radius: 25px; }
+.dlg-actions .btn[type='submit'] { background: var(--sodium); color: var(--sodium-ink); }
+.dlg-actions .btn.danger { background: var(--danger); color: #2a0606; }
+.dlg-color-head { display: flex; align-items: center; gap: 14px; }
+.dlg-color-head h3 { margin: 0; }
+.dlg-chip { width: 56px; height: 56px; border-radius: 18px; flex: none; box-shadow: 0 0 0 3px var(--deep), 0 0 0 5px currentColor; color: var(--line); }
+.dlg-label { font-size: 14px; font-weight: 650; color: var(--muted); margin: 18px 0 10px; }
+.dlg-swatches { display: flex; gap: 10px; flex-wrap: wrap; }
+.dlg-swatches button { width: 40px; height: 40px; border-radius: 50%; }
+.dlg-swatches button.on { box-shadow: 0 0 0 3px var(--deep), 0 0 0 5px var(--text); }
+.dlg-track { height: 28px; border-radius: 14px; position: relative; touch-action: none; margin: 0 4px; }
+.dlg-knob { position: absolute; top: -4px; width: 36px; height: 36px; margin-left: -18px; border-radius: 50%; border: 4px solid #fff; box-sizing: border-box; box-shadow: 0 2px 8px rgba(0, 0, 0, .4); pointer-events: none; }
+.page-footer { padding-bottom: calc(var(--bottom) + 18px); margin-top: auto !important; }
+.page.with-footer { display: flex; flex-direction: column; }
+.page.with-footer > * { flex-shrink: 0; }
+/* start screen */
+.startup { align-items: center; text-align: center; }
+.startup .note { margin-left: auto; margin-right: auto; }
+.splash-line { min-height: 2.8em; max-width: 30ch; margin: 18px auto 0; color: var(--muted); font-size: 15.5px; line-height: 1.4; animation: fade .4s ease; }
+
 /* ========================================================== Liquid glass */
+/* Graphite, no tint: the colors come from the covers. Every pane is clear
+   glass: what passes under it is blurred and bent by its edges (glass.js
+   gives each pane its own lens, from its size and corners). */
 :root[data-theme='glass'] {
-  --night: #262f7c; --deep: rgba(30, 32, 90, .55); --surface: rgba(255, 255, 255, .16); --line: rgba(255, 255, 255, .26);
-  --text: #ffffff; --muted: rgba(255, 255, 255, .82); --faint: rgba(255, 255, 255, .6);
-  --sodium: #ffffff; --sodium-ink: #27307e;
+  --night: #0e0e11; --deep: #141418; --surface: rgba(255, 255, 255, .07); --line: rgba(255, 255, 255, .16);
+  --text: #ffffff; --muted: rgba(255, 255, 255, .64); --faint: rgba(255, 255, 255, .42);
+  --sodium: #ffffff; --sodium-ink: #111111; --danger: #ff9b9b;
+  --glass-bg: rgba(255, 255, 255, .06);
+  --glass-edge: 1px solid rgba(255, 255, 255, .16);
+  --glass-shine: inset 0 1px 0 rgba(255, 255, 255, .38), inset 1px 0 0 rgba(255, 255, 255, .10), inset 0 -1px 0 rgba(255, 255, 255, .06), inset 0 0 18px rgba(255, 255, 255, .05);
+  --glass-blur: blur(14px) saturate(1.8) brightness(1.08);
 }
-[data-theme='glass'] body { background: #262f7c; }
-[data-theme='glass'] .app::before, [data-theme='glass'] .full::before, [data-theme='glass'] .karaoke::before { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  background: radial-gradient(420px 420px at 0% 0%, rgba(255, 143, 177, .7), transparent 70%), radial-gradient(380px 380px at 100% 45%, rgba(72, 209, 192, .55), transparent 70%), radial-gradient(360px 360px at 10% 100%, rgba(242, 193, 78, .4), transparent 70%), #262f7c; }
+[data-theme='glass'] body { background: #0e0e11; }
+[data-theme='glass'] .app::before { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none; background: radial-gradient(500px 360px at 50% -10%, rgba(255, 255, 255, .07), transparent 70%), #0e0e11; }
 [data-theme='glass'] .app { position: relative; isolation: isolate; }
-[data-theme='glass'] .full, [data-theme='glass'] .karaoke { background: transparent; isolation: isolate; }
-[data-theme='glass'] .full .glow { opacity: .8; filter: blur(70px) saturate(1.6); }
-[data-theme='glass'] .card-surface, [data-theme='glass'] .set-card, [data-theme='glass'] .q-opt, [data-theme='glass'] .src, [data-theme='glass'] .mini, [data-theme='glass'] .device-pill, [data-theme='glass'] .sq-btn, [data-theme='glass'] .segments button, [data-theme='glass'] .btn.quiet, [data-theme='glass'] .field, [data-theme='glass'] .start-grid button, [data-theme='glass'] .svc-row button, [data-theme='glass'] .chip {
-  background: rgba(255, 255, 255, .15); -webkit-backdrop-filter: blur(22px) saturate(1.7); backdrop-filter: blur(22px) saturate(1.7);
-  border: 1px solid rgba(255, 255, 255, .3); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4); }
-[data-theme='glass'] .segments button[aria-pressed='true'] { background: rgba(255, 255, 255, .88); color: #27307e; }
-[data-theme='glass'] .btn.primary { background: #fff; color: #27307e; }
-[data-theme='glass'] .dock { background: transparent; padding: 0 12px calc(var(--bottom) + 12px); position: relative; }
-[data-theme='glass'] .mini { margin: 0 0 8px; border-radius: 24px; }
-[data-theme='glass'] .tabbar { border-radius: 30px; padding: 4px; border: 1px solid rgba(255, 255, 255, .3); background: rgba(255, 255, 255, .15); -webkit-backdrop-filter: blur(22px) saturate(1.7); backdrop-filter: blur(22px) saturate(1.7); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4), 0 10px 30px rgba(10, 10, 40, .25); }
-[data-theme='glass'] .tabbar button { height: 54px; border-radius: 26px; color: rgba(255, 255, 255, .78); }
-[data-theme='glass'] .tabbar button[aria-current='page'] { background: rgba(255, 255, 255, .28); color: #fff; }
+[data-theme='glass'] .card-surface, [data-theme='glass'] .set-card, [data-theme='glass'] .q-opt, [data-theme='glass'] .src, [data-theme='glass'] .mini,
+[data-theme='glass'] .device-pill, [data-theme='glass'] .sq-btn, [data-theme='glass'] .segments button, [data-theme='glass'] .btn.quiet, [data-theme='glass'] .field,
+[data-theme='glass'] .start-grid button, [data-theme='glass'] .svc-row button, [data-theme='glass'] .chip, [data-theme='glass'] .tabbar, [data-theme='glass'] .player-bottom,
+[data-theme='glass'] .sheet, [data-theme='glass'] .mix-card .art, [data-theme='glass'] .dir-row button, [data-theme='glass'] .device .di {
+  background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  border: var(--glass-edge); box-shadow: var(--glass-shine), 0 10px 28px rgba(0, 0, 0, .38); }
+[data-theme='glass'] .segments button[aria-pressed='true'], [data-theme='glass'] .dir-row button[aria-pressed='true'] { background: rgba(255, 255, 255, .9); color: #111; }
+[data-theme='glass'] .btn.primary, [data-theme='glass'] .chip.on, [data-theme='glass'] .k-play, [data-theme='glass'] .device-pill.on { background: #fff; color: #111; }
+[data-theme='glass'] .switch.on i { background: #111; }
+/* The dock floats: the page runs under it. */
+[data-theme='glass'] .dock { position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; background: transparent; padding: 0 12px calc(var(--bottom) + 12px); }
+[data-theme='glass'] .page { padding-bottom: calc(var(--dock-h, 150px) + 20px); }
+[data-theme='glass'] .page.with-footer { padding-bottom: 0; }
+[data-theme='glass'] .mini { margin: 0 0 8px; border-radius: 26px; }
+[data-theme='glass'] .tabbar { border-radius: 32px; padding: 4px; }
+[data-theme='glass'] .tabbar button { height: 56px; border-radius: 28px; color: rgba(255, 255, 255, .78); }
+[data-theme='glass'] .tabbar button[aria-current='page'] { background: rgba(255, 255, 255, .14); color: #fff; }
 [data-theme='glass'] .tabbar button[aria-current='page'] svg { color: #fff; }
-[data-theme='glass'] .full .cover-big { border-radius: 34px; box-shadow: 0 30px 60px rgba(40, 10, 60, .35), inset 0 0 0 1px rgba(255, 255, 255, .5); }
-[data-theme='glass'] .player-bottom { margin-top: 10px; padding: 18px 18px 14px; border-radius: 32px; background: rgba(255, 255, 255, .16); -webkit-backdrop-filter: blur(22px) saturate(1.7); backdrop-filter: blur(22px) saturate(1.7); border: 1px solid rgba(255, 255, 255, .34); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5); }
+[data-theme='glass'] .tab-icon .dot { box-shadow: none; }
+[data-theme='glass'] .full, [data-theme='glass'] .karaoke { background: #0e0e11; isolation: isolate; }
+[data-theme='glass'] .full .glow { opacity: .28; filter: blur(80px) saturate(1.2); }
+[data-theme='glass'] .full .cover-big { border-radius: 32px; box-shadow: 0 26px 50px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(255, 255, 255, .3); }
+[data-theme='glass'] .player-bottom { margin-top: 8px; padding: 16px 18px 10px; border-radius: 30px; }
 [data-theme='glass'] .ring-play.big .ring-bg { fill: #fff; }
-[data-theme='glass'] .scrim { background: rgba(20, 20, 60, .45); }
-[data-theme='glass'] .sheet { background: rgba(40, 46, 120, .72); -webkit-backdrop-filter: blur(30px) saturate(1.6); backdrop-filter: blur(30px) saturate(1.6); border-top: 1px solid rgba(255, 255, 255, .3); }
-[data-theme='glass'] .sticky-top { background: transparent; }
-[data-theme='glass'] .toast { background: rgba(255, 255, 255, .92); color: #27307e; }
+[data-theme='glass'] .ring-play.big .ring-icon { color: #111 !important; }
+[data-theme='glass'] .scrim { background: rgba(0, 0, 0, .36); }
+[data-theme='glass'] .sheet { margin: 0 8px calc(var(--bottom) + 10px); border-radius: 30px; padding-bottom: 14px; }
+[data-theme='glass'] .sheet .grab { background: rgba(255, 255, 255, .5); }
+[data-theme='glass'] .sticky-top, [data-theme='glass'] .page-footer { background: transparent; }
+[data-theme='glass'] .toast { background: rgba(255, 255, 255, .92); color: #111; }
+[data-theme='glass'] .toast button { color: #111; }
 [data-theme='glass'] .pl-item { background: transparent; }
 [data-theme='glass'] .codec-dot.lossless { background: #6ff0a0; }
+[data-theme='glass'] .sheet-item.accent { color: #ff9b9b; }
+[data-theme='glass'] .sheet-item.accent svg { color: #ff9b9b; }
 
 /* ================================================================== Luce */
 :root[data-theme='luce'] {
@@ -533,3 +593,23 @@ img { display: block; }
 [data-theme='luce'] .new-dot, [data-theme='luce'] .tab-icon .dot, [data-theme='luce'] .head-dot { box-shadow: 0 0 8px #f2a65a; }
 [data-theme='luce'] .toast { background: #f2f0ec; color: #111; }
 [data-theme='luce'] .pl-item { background: #111; }
+/* 0.1: the dock floats in dark smoked glass, the page runs under it */
+[data-theme='luce'] .dock { position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; }
+[data-theme='luce'] .page { padding-bottom: calc(var(--dock-h, 150px) + 20px); }
+[data-theme='luce'] .page.with-footer { padding-bottom: 0; }
+[data-theme='luce'] .app { position: relative; }
+[data-theme='luce'] .mini, [data-theme='luce'] .tabbar { background: rgba(24, 24, 24, .72); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); border: 1px solid rgba(255, 255, 255, .1); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 12px 30px rgba(0, 0, 0, .5); }
+[data-theme='luce'] .mini .ring-play { color: #f6dcc0; }
+[data-theme='luce'] .page-footer { background: linear-gradient(transparent, #111 30%); }
+[data-theme='luce'] .player-bottom { margin-top: 8px; padding: 16px 18px 10px; }
+[data-theme='luce'] .ring-play.big { transform: scale(.86); }
+[data-theme='luce'] .rediscover { background: linear-gradient(180deg, #262626, #1c1c1c); border: 1px solid rgba(255, 255, 255, .07); border-radius: 30px; padding: 6px 12px; }
+[data-theme='luce'] .rediscover .track-num { display: block; color: var(--faint); font-weight: 600; width: 22px; text-align: left; }
+[data-theme='luce'] .rediscover .row:first-child .track-num { color: var(--sodium); }
+[data-theme='luce'] .rediscover .track .sub { color: var(--muted); }
+[data-theme='luce'] .rediscover .row:first-child .track .sub { color: var(--sodium); }
+[data-theme='luce'] .sheet { margin: 0 8px calc(var(--bottom) + 10px); border-radius: 30px; background: linear-gradient(180deg, #262626, #1a1a1a); border: 1px solid rgba(255, 255, 255, .08); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 -10px 40px rgba(0, 0, 0, .6); padding-bottom: 14px; }
+[data-theme='luce'] .sheet h3 { text-transform: uppercase; letter-spacing: .22em; font-size: 12.5px; font-weight: 600; color: #bdbab5; }
+[data-theme='luce'] .sheet .sheet-sub { color: var(--sodium); }
+[data-theme='luce'] .sheet-item.accent svg { color: var(--sodium); }
+[data-theme='luce'] .scrim { background: rgba(0, 0, 0, .55); }

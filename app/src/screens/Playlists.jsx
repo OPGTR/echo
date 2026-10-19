@@ -5,7 +5,7 @@ import { Plus, Download, ArrowDownUp, ChevronDown, GripVertical, Loader2, Link a
 import { api, artUrl } from '../api'
 import { useApp } from '../store'
 import { playList } from '../player'
-import { TrackRow, Cover, songMenu, downloadSongs } from '../components/Track'
+import { TrackRow, Cover, songMenu, downloadSongs, askPlaylistName } from '../components/Track'
 import { HeadActions } from '../components/Chrome'
 import Rings from '../components/Rings'
 import Back from '../components/Back'
@@ -33,7 +33,7 @@ export default function Playlists() {
   useEffect(() => { api.playlists().then(setLists).catch(() => setLists([])) }, [version])
   const sorted = lists ? [...lists].sort(order === 'name' ? (a, b) => a.name.localeCompare(b.name, 'fr') : order === 'recent' ? (a, b) => b.updated_at - a.updated_at : () => 0) : null
   const create = async () => {
-    const name = window.prompt(t('Nom de la playlist'), '')
+    const name = await askPlaylistName('')
     if (name === null) return
     const pl = await api.createPlaylist(name || t('Nouvelle playlist'))
     useApp.getState().libraryChanged()
@@ -99,9 +99,9 @@ export function PlaylistScreen({ id }) {
   const more = () => useApp.getState().showSheet({
     title: pl.name,
     items: [
-      { label: t('Renommer'), icon: Pencil, onSelect: async () => { const name = window.prompt(t('Nom de la playlist'), pl.name); if (name) setPl(await api.updatePlaylist(pl.id, { name })) } },
+      { label: t('Renommer'), icon: Pencil, onSelect: async () => { const name = await askPlaylistName(pl.name, { title: t('Renommer la playlist'), confirm: t('Renommer') }); if (name) setPl(await api.updatePlaylist(pl.id, { name })) } },
       { label: t('Tout télécharger'), icon: Download, onSelect: () => downloadSongs(songs) },
-      { label: t('Supprimer la playlist'), icon: Trash2, danger: true, onSelect: async () => { if (window.confirm(t('Supprimer « {name} » ? Les titres restent sur ton téléphone.', { name: pl.name }))) { await api.deletePlaylist(pl.id); useApp.getState().libraryChanged(); back() } } },
+      { label: t('Supprimer la playlist'), icon: Trash2, danger: true, onSelect: async () => { if (await useApp.getState().ask({ kind: 'confirm', title: t('Supprimer « {name} » ?', { name: pl.name }), hint: t('Les titres restent sur ton téléphone.'), confirm: t('Supprimer'), danger: true })) { await api.deletePlaylist(pl.id); useApp.getState().libraryChanged(); back() } } },
     ],
   })
 

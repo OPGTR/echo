@@ -5,7 +5,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Sparkles, Search, Library, ListMusic, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Heart, ChevronDown, Loader2, Download, Settings, X, Mic, Cast, Smartphone, Tv, Speaker, ArrowUpCircle, Check } from 'lucide-react'
 import { useApp } from '../store'
 import { api } from '../api'
-import { usePlayer, toggle, next, previous, seek, toggleShuffle, cycleRepeat, toggleLike, openFull, coverOf, keyOf, jumpTo, removeFromQueue, codecLabel, castScan, castTo, stopCasting } from '../player'
+import { usePlayer, toggle, next, previous, seek, toggleShuffle, cycleRepeat, toggleLike, openFull, coverOf, keyOf, jumpTo, removeFromQueue, codecLabel, castScan, castTo, stopCasting, stopPlayer, restorePlayer } from '../player'
 import { onEngine } from '../engine'
 import { Cover, StateMark, goToArtist } from './Track'
 import { t } from '../i18n'
@@ -51,11 +51,55 @@ export function RingPlay({ big = false }) {
   )
 }
 
+/**
+ * Follows a finger dragging down: the element moves with it, and past
+ * `limit` px (or a quick flick) `onClose` runs. Taps still go through.
+ */
+function useSwipeDown(onClose, { limit = 110, ignore = 'input, .k-lines' } = {}) {
+  const ref = useRef(null)
+  const drag = useRef(null)
+  const move = dy => { const el = ref.current; if (el) { el.style.transform = dy ? `translateY(${dy}px)` : ''; el.style.transition = dy ? 'none' : '' } }
+  return {
+    ref,
+    onTouchStart: e => {
+      if (e.touches.length !== 1 || e.target.closest(ignore)) { drag.current = null; return }
+      drag.current = { y: e.touches[0].clientY, x: e.touches[0].clientX, at: Date.now(), dy: 0, on: false }
+    },
+    onTouchMove: e => {
+      const d = drag.current
+      if (!d) return
+      const dy = e.touches[0].clientY - d.y, dx = e.touches[0].clientX - d.x
+      if (!d.on) { if (Math.abs(dy) < 10) return; if (dy < 0 || Math.abs(dx) > Math.abs(dy)) { drag.current = null; return } d.on = true }
+      d.dy = Math.max(0, dy)
+      move(d.dy)
+    },
+    onTouchEnd: () => {
+      const d = drag.current
+      drag.current = null
+      if (!d?.on) return
+      const quick = d.dy > 40 && d.dy / Math.max(1, Date.now() - d.at) > 0.6
+      if (d.dy > limit || quick) {
+        const el = ref.current
+        if (el) { el.style.transition = 'transform .18s ease-in'; el.style.transform = 'translateY(110%)' }
+        setTimeout(() => { move(0); onClose() }, 170)
+      } else move(0)
+    },
+  }
+}
+
 export function MiniPlayer() {
   const song = usePlayer(s => s.queue[s.index])
+  const swipe = useSwipeDown(() => {
+    // Swiped away: the music stops and the player leaves the screen.
+    const s = usePlayer.getState()
+    const keep = { queue: s.queue, index: s.index, position: s.position }
+    stopPlayer()
+    useApp.getState().toast(t('Lecture arrêtée.'), { label: t('Annuler'), run: () => restorePlayer(keep) })
+  }, { limit: 50 })
   if (!song) return null
   return (
-    <div className="mini" role="button" tabIndex={0} onClick={() => openFull(true)} onKeyDown={e => { if (e.key === 'Enter') openFull(true) }} aria-label={t('Lecture')}>
+    <div className="mini" ref={swipe.ref} onTouchStart={swipe.onTouchStart} onTouchMove={swipe.onTouchMove} onTouchEnd={swipe.onTouchEnd}
+      role="button" tabIndex={0} onClick={() => openFull(true)} onKeyDown={e => { if (e.key === 'Enter') openFull(true) }} aria-label={t('Lecture')}>
       <Cover song={song} />
       <div className="text">
         <div className="title">{song.title}</div>
@@ -94,13 +138,15 @@ export function FullPlayer() {
   const [lyricsOpen, setLyricsOpen] = useState(false)
   const [castOpen, setCastOpen] = useState(false)
   const job = useApp(s => (song && !song.local_id && song.deezer_id ? s.downloads.find(d => d.deezer_id === String(song.deezer_id)) : null))
+  const swipe = useSwipeDown(() => openFull(false))
   if (!open || !song) return null
   const cover = coverOf(song)
   const RepeatIcon = repeat === 'one' ? Repeat1 : Repeat
   const device = cast.casting && cast.device ? cast.device : null
   const DeviceIcon = device ? (device.kind === 'speaker' ? Speaker : Tv) : Smartphone
   return (
-    <div className="full" role="dialog" aria-modal="true" aria-label={t('Lecture')}>
+    <div className="full" role="dialog" aria-modal="true" aria-label={t('Lecture')} ref={swipe.ref}
+      onTouchStart={e => { if (!queueOpen && !lyricsOpen && !castOpen) swipe.onTouchStart(e) }} onTouchMove={swipe.onTouchMove} onTouchEnd={swipe.onTouchEnd}>
       {cover && <div className="glow" style={{ backgroundImage: `url("${cover}")` }} />}
       <div className="bar">
         <button type="button" className="icon-btn" style={{ color: 'var(--text)' }} onClick={() => openFull(false)} aria-label={t('Fermer')}><ChevronDown size={28} /></button>
@@ -110,7 +156,7 @@ export function FullPlayer() {
         <CodecBadge song={song} />
         <button type="button" className="sq-btn" onClick={() => setLyricsOpen(true)} aria-label={t('Paroles et karaoké')}><Mic size={18} /></button>
       </div>
-      <Cover song={song} className="cover-big" />
+      <div className="cover-wrap"><Cover song={song} className="cover-big" /></div>
       <div className="player-bottom">
         <div className="meta">
           <div className="text">
@@ -142,11 +188,11 @@ export function FullPlayer() {
           <button type="button" className="icon-btn" onClick={() => next()} aria-label={t('Suivant')}><SkipForward size={30} fill="currentColor" /></button>
           <button type="button" className={`icon-btn ${repeat !== 'off' ? 'on' : 'dim'}`} onClick={cycleRepeat} aria-label={t('Répéter')} aria-pressed={repeat !== 'off'}><RepeatIcon size={22} /></button>
         </div>
-        <div className="device-row">
-          <button type="button" className={`device-pill ${device ? 'on' : ''}`} onClick={() => setCastOpen(true)} aria-label={`${t('Écoute sur')} ${device ? device.name : t('Ce téléphone')}, ${t('changer d’appareil')}`}>
-            {device ? <Cast size={20} /> : <DeviceIcon size={20} />}{device ? device.name : t('Ce téléphone')}
-          </button>
-        </div>
+      </div>
+      <div className="device-row">
+        <button type="button" className={`device-pill ${device ? 'on' : ''}`} onClick={() => setCastOpen(true)} aria-label={`${t('Écoute sur')} ${device ? device.name : t('Ce téléphone')}, ${t('changer d’appareil')}`}>
+          {device ? <Cast size={20} /> : <DeviceIcon size={20} />}{device ? device.name : t('Ce téléphone')}
+        </button>
       </div>
       {queueOpen && <QueueSheet onClose={() => setQueueOpen(false)} />}
       {lyricsOpen && <Karaoke song={song} onClose={() => setLyricsOpen(false)} />}
@@ -190,9 +236,8 @@ function Karaoke({ song, onClose }) {
         {data && !data.found && <div className="empty"><strong>{t('Pas de paroles pour ce titre.')}</strong>{t('Elles viennent de LRCLIB, une base libre : certains titres n’y sont pas encore.')}</div>}
         {data?.found && !lines.length && <div className="k-plain">{data.plain}</div>}
         {lines.map((l, i) => (
-          <button type="button" key={i} data-line={i} className={`k-line ${i === current ? 'now' : i < current ? 'past' : ''}`} onClick={() => seek(l.t)}
-            style={i === current ? { '--k': `${Math.round(progress * 100)}%` } : undefined}>
-            {l.line || '♪'}
+          <button type="button" key={i} data-line={i} className={`k-line ${i === current ? 'now' : i < current ? 'past' : ''}`} onClick={() => { seek(l.t); usePlayer.getState().playing || toggle() }}>
+            {i === current ? <SungLine text={l.line || '♪'} progress={progress} /> : (l.line || '♪')}
           </button>
         ))}
       </div>
@@ -204,6 +249,24 @@ function Karaoke({ song, onClose }) {
       </div>
     </div>
   )
+}
+
+/**
+ * The line being sung, lit word by word: when it wraps on two or three rows,
+ * the first row fills first, then the next (not all rows at once).
+ */
+function SungLine({ text, progress }) {
+  const words = String(text).split(/(\s+)/)
+  const total = words.reduce((n, w) => n + w.length, 0) || 1
+  let at = 0
+  const lit = progress * total
+  return words.map((w, i) => {
+    const start = at
+    at += w.length
+    if (/^\s+$/.test(w)) return w
+    const k = Math.max(0, Math.min(1, (lit - start) / Math.max(1, w.length)))
+    return <span key={i} className="k-word" style={{ '--k': `${Math.round(k * 100)}%` }}>{w}</span>
+  })
 }
 
 // ------------------------------------------------------------------ casting
@@ -284,12 +347,103 @@ export function ActionSheet() {
         <h3>{sheet.title}</h3>
         {sheet.subtitle && <div className="sheet-sub">{sheet.subtitle}</div>}
         {sheet.items.map((item, i) => (
-          <button key={`${item.label}-${i}`} type="button" className={`sheet-item ${item.danger ? 'danger' : ''} ${item.checked ? 'checked' : ''}`} onClick={() => { if (!item.keepOpen) close(); item.onSelect() }}>
-            {item.icon ? <item.icon size={20} /> : <span style={{ width: 20 }} />}<span style={{ flex: 1 }}>{item.label}</span>{item.hint && <span className="hint">{item.hint}</span>}{item.checked && <Check size={20} className="check" />}
+          <button key={`${item.label}-${i}`} type="button" className={`sheet-item ${item.danger ? 'danger' : ''} ${item.accent ? 'accent' : ''} ${item.checked ? 'checked' : ''}`} onClick={() => { if (!item.keepOpen) close(); item.onSelect() }}>
+            {item.icon ? <item.icon size={20} /> : <span style={{ width: 20 }} />}
+            <span style={{ flex: 1 }}>{item.label}{item.detail && <span className="detail">{item.detail}</span>}</span>
+            {item.hint && <span className="hint">{item.hint}</span>}{item.checked && <Check size={20} className="check" />}
           </button>
         ))}
         {sheet.footer}
       </div>
+    </div>
+  )
+}
+
+// ------------------------------------------------------------------ dialogs
+const hexToHsl = hex => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '')
+  const n = m ? parseInt(m[1], 16) : 0xf2c14e
+  const r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2
+  let h = 0, sat = 0
+  if (max !== min) {
+    const d = max - min
+    sat = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4
+    h *= 60
+  }
+  return { h, s: sat, l }
+}
+const hslToHex = ({ h, s, l }) => {
+  const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l)
+  const f = n => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))))
+  return `#${[f(0), f(8), f(4)].map(v => v.toString(16).padStart(2, '0')).join('')}`
+}
+
+/** A track to drag (hue, brightness): its background shows the range. */
+function Track2({ label, value, onChange, background, knob }) {
+  const ref = useRef(null)
+  const at = e => { const r = ref.current.getBoundingClientRect(); onChange(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width))) }
+  return (
+    <div className="dlg-track" ref={ref} style={{ background }} role="slider" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value * 100)} tabIndex={0}
+      onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); at(e) }} onPointerMove={e => { if (e.buttons) at(e) }}
+      onKeyDown={e => { if (e.key === 'ArrowRight') onChange(Math.min(1, value + 0.02)); if (e.key === 'ArrowLeft') onChange(Math.max(0, value - 0.02)) }}>
+      <span className="dlg-knob" style={{ left: `${value * 100}%`, background: knob }} />
+    </div>
+  )
+}
+
+/** Écho's own windows: a name to type, a color to pick, a yes/no. */
+export function Dialog() {
+  const dialog = useApp(s => s.dialog)
+  const close = useApp(s => s.closeDialog)
+  const [text, setText] = useState('')
+  const [hsl, setHsl] = useState({ h: 0, s: 0.8, l: 0.6 })
+  const input = useRef(null)
+  useEffect(() => {
+    if (!dialog) return
+    if (dialog.kind === 'text') { setText(dialog.value || ''); setTimeout(() => { input.current?.focus(); input.current?.select() }, 60) }
+    if (dialog.kind === 'color') setHsl(hexToHsl(dialog.value))
+  }, [dialog])
+  if (!dialog) return null
+  const hex = hslToHex(hsl)
+  const ok = () => close(dialog.kind === 'text' ? (text.trim() || dialog.value || '') : dialog.kind === 'color' ? hex : true)
+  return (
+    <div className="scrim" onClick={() => close(null)}>
+      <form className="sheet dlg" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={dialog.title} onSubmit={e => { e.preventDefault(); ok() }}>
+        <div className="grab" />
+        {dialog.kind === 'color' ? (
+          <div className="dlg-color-head">
+            <span className="dlg-chip" style={{ background: hex }} />
+            <span><h3>{dialog.title}</h3><span className="sheet-sub">{hex.toUpperCase()}</span></span>
+          </div>
+        ) : <h3>{dialog.title}</h3>}
+        {dialog.kind === 'text' && <>
+          <label className="dlg-field">
+            <input ref={input} value={text} onChange={e => setText(e.target.value)} placeholder={dialog.placeholder} aria-label={dialog.label} maxLength={120} enterKeyHint="done" />
+          </label>
+          {dialog.hint && <div className="dlg-hint">{dialog.hint}</div>}
+        </>}
+        {dialog.kind === 'confirm' && dialog.hint && <div className="dlg-hint" style={{ marginTop: 4 }}>{dialog.hint}</div>}
+        {dialog.kind === 'color' && <>
+          {dialog.suggestions?.length > 0 && <>
+            <div className="dlg-label">{t('Suggestions')}</div>
+            <div className="dlg-swatches">
+              {dialog.suggestions.map(([v, name]) => <button key={v} type="button" aria-label={t(name)} style={{ background: v }} className={v.toLowerCase() === hex ? 'on' : ''} onClick={() => setHsl(hexToHsl(v))} />)}
+            </div>
+          </>}
+          <div className="dlg-label">{t('Teinte')}</div>
+          <Track2 label={t('Teinte')} value={hsl.h / 360} onChange={v => setHsl({ ...hsl, h: v * 360, s: Math.max(hsl.s, 0.5) })} knob={hex}
+            background="linear-gradient(90deg,#ff5a5a,#ffd25a,#7cff5a,#5affd9,#5a8cff,#c75aff,#ff5a5a)" />
+          <div className="dlg-label">{t('Luminosité')}</div>
+          <Track2 label={t('Luminosité')} value={(hsl.l - 0.2) / 0.65} onChange={v => setHsl({ ...hsl, l: 0.2 + v * 0.65 })} knob={hex}
+            background={`linear-gradient(90deg, ${hslToHex({ ...hsl, l: 0.2 })}, ${hslToHex({ ...hsl, l: 0.52 })}, ${hslToHex({ ...hsl, l: 0.85 })})`} />
+        </>}
+        <div className="dlg-actions">
+          <button type="button" className="btn quiet" onClick={() => close(null)}>{t('Annuler')}</button>
+          <button type="submit" className={`btn ${dialog.danger ? 'danger' : ''}`} style={dialog.kind === 'color' ? { background: hex, color: hsl.l > 0.55 ? '#141414' : '#fff' } : undefined}>{dialog.confirm || t('OK')}</button>
+        </div>
+      </form>
     </div>
   )
 }

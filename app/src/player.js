@@ -1,8 +1,8 @@
 // The player. A song is either yours (local_id: plays at once, offline) or
 // from the catalogue (deezer_id): then it's downloaded first and plays as soon
-// as it's in your library. In a mix, an album or a playlist the next two songs
-// are downloaded ahead so the music keeps going; a song picked from a search
-// is downloaded alone.
+// as it's in your library. In a mix, an album or a playlist the next song is
+// downloaded while this one plays, so the music keeps going; a song picked
+// from a search is downloaded alone.
 import { create } from 'zustand'
 import { api, streamUrl, artUrl } from './api'
 import { useApp, pokeDownloads } from './store'
@@ -90,6 +90,20 @@ onEngine(e => {
   } else if (e.type === 'remote') {
     if (e.action === 'next') next()
     else if (e.action === 'previous') previous()
+    else if (e.action === 'jump') {
+      // Picked on the car screen (or moved on by the player itself): it plays already.
+      flushListen()
+      const s = get()
+      const after = s.queue.findIndex((x, i) => i > s.index && x.local_id === e.id)
+      const index = after >= 0 ? after : s.queue.findIndex(x => x.local_id === e.id)
+      if (index < 0) return
+      ++generation
+      const song = s.queue[index]
+      set({ index, playing: true, loading: false, failed: null, position: 0, duration: song.duration || 0 })
+      listened = { id: song.local_id, seconds: 0, last: 0 }
+      loadDetails(song.local_id)
+      afterStart()
+    }
   } else if (e.type === 'error') {
     const song = current()
     if (!song) return
@@ -132,17 +146,25 @@ function markLocal(key, localId) {
   set({ queue: queue.map(s => (keyOf(s) === key ? { ...s, local_id: localId, has_art: s.cover ? s.has_art : 1 } : s)) })
 }
 
-/** In a mix, an album or a playlist: the next songs are got ready meanwhile. */
+/**
+ * In a mix, an album or a playlist: while a song plays, the next one is
+ * downloaded (one at a time: song 2 while 1 plays, song 3 once 2 plays).
+ */
+let prefetching = null
 function prefetch() {
-  const { queue, index, context } = get()
+  const { queue, index, context, repeat } = get()
   if (context === 'search') return
-  const ahead = queue.slice(index + 1, index + 3).filter(s => !s.local_id && s.deezer_id)
-  if (!ahead.length || !useApp.getState().source?.installed) return
-  api.download(ahead).then(jobs => {
-    jobs.forEach((job, i) => { if (job?.track_id) markLocal(keyOf(ahead[i]), job.track_id) })
+  const following = repeat === 'all' && index + 1 >= queue.length ? queue[0] : queue[index + 1]
+  if (!following || following.local_id || !following.deezer_id || !useApp.getState().source?.installed) return
+  const key = keyOf(following)
+  if (prefetching === key) return
+  prefetching = key
+  const stillNext = () => { const s = get(); const n = s.queue[s.index + 1] || (s.repeat === 'all' ? s.queue[0] : null); return n && keyOf(n) === key }
+  api.download([following]).then(async ([job]) => {
     pokeDownloads()
-    queueNextInEngine()
-  }).catch(() => {})
+    const localId = job?.track_id || await waitForDownload(following.deezer_id, stillNext)
+    if (localId) { markLocal(key, localId); queueNextInEngine(); shareLibrary() }
+  }).catch(() => {}).finally(() => { if (prefetching === key) prefetching = null })
 }
 
 async function loadDetails(id) {
@@ -181,9 +203,21 @@ async function queueNextInEngine() {
   engine.setNext(following?.local_id ? await itemFor(following) : null)
 }
 
+/** The songs coming next that are on the phone: what a car screen lists. */
+function shareLibrary() {
+  const { queue, index } = get()
+  if (index < 0) return
+  const items = queue.slice(index, index + 60).filter(s => s.local_id).map(s => ({
+    id: s.local_id, url: streamUrl(s.local_id), title: s.title || '', artist: s.artist || '', album: s.album || '',
+    artwork: coverOf(s), duration: s.duration || 0,
+  }))
+  engine.setLibrary(items)
+}
+
 function afterStart() {
   prefetch()
   queueNextInEngine()
+  shareLibrary()
   saveSession()
   useApp.getState().libraryChanged()
 }
@@ -323,6 +357,21 @@ export async function toggleLike(localId) {
 }
 
 export const openFull = open => set({ fullOpen: open })
+
+/** Swiped the mini player away: the music stops and the player goes. */
+export function stopPlayer() {
+  flushListen(); saveSession()
+  ++generation
+  engine.stop()
+  set({ queue: [], index: -1, playing: false, loading: false, position: 0, duration: 0, fullOpen: false, failed: null })
+  try { localStorage.removeItem(SESSION) } catch {}
+}
+/** "Annuler" after swiping it away: the same song, where it was, paused. */
+export function restorePlayer({ queue, index, position }) {
+  if (!queue?.length || index < 0) return
+  set({ queue, index: -1 })
+  playAt(index, { autoplay: false, position })
+}
 
 // ------------------------------------------------------------------ casting
 /** Devices on the Wi-Fi (TV, Google Nest…). Scanning runs while the sheet is open. */

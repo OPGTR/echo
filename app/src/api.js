@@ -70,6 +70,9 @@ export const api = {
   mixArtists: () => call('/mixes/artists'),
   customMix: (artists, era) => call('/mixes/custom', { method: 'POST', body: { artists, era } }),
 
+  dislikes: () => call('/dislikes'),
+  dislike: song => call('/dislikes', { method: 'POST', body: { title: song.title, artist: song.artist, deezer_id: song.deezer_id || null } }),
+  undislike: song => call('/dislikes/remove', { method: 'POST', body: song.key ? { key: song.key } : { title: song.title, artist: song.artist, deezer_id: song.deezer_id || null } }),
   follows: (force = false) => call(`/follows${q({ force })}`),
   follow: artist => call('/follows', { method: 'POST', body: artist }),
   unfollow: id => call(`/follows/${encodeURIComponent(id)}`, { method: 'DELETE' }),

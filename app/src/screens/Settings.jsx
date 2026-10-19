@@ -134,11 +134,60 @@ export function Onboarding({ onDone }) {
   )
 }
 
+// Said while Écho starts, a different one each time.
+const SPLASH = [
+  'Accordage des guitares…',
+  'On souffle sur le vinyle…',
+  'Le batteur cherche ses baguettes.',
+  'Chauffe les enceintes, pas les voisins.',
+  'Échauffement des cordes vocales…',
+  'Rembobinage de la cassette…',
+  'Le DJ choisit le prochain son.',
+  'Un, deux, un, deux… test micro.',
+  'Les basses arrivent, les voisins aussi.',
+  'Mise en place du refrain.',
+  'On range les CD par couleur.',
+  'Le métronome se met à l’heure.',
+  'Fais de la place au dernier rang.',
+  'Recherche du bon tempo…',
+  'Le saxophone fait ses gammes.',
+  'Rappel ! Rappel !',
+  'Chut, ça commence.',
+  'Les écouteurs se démêlent tout seuls (presque).',
+  'Version longue, sans coupure pub.',
+  'Lumière sur la scène…',
+  'Le piano est accordé, promis.',
+  'Ce soir, playlist sans fausse note.',
+  'On cherche la face B.',
+  'Le public allume ses briquets.',
+  'Mode aléatoire, mais pas trop.',
+  'Les ondes se propagent…',
+  'Ta musique, chez toi, hors ligne.',
+  'Le volume est à 11.',
+  'Pas de pub. Juste du son.',
+  'Écho… écho… écho…',
+  'Lecture de la partition…',
+  'Les violons s’accordent sur un la.',
+  'Encore un petit solo et on y va.',
+  'Ça va groover.',
+  'Le refrain tourne déjà dans ta tête.',
+]
+
+function splashLine() {
+  let last = -1
+  try { last = Number(localStorage.getItem('echo-splash') ?? -1) } catch {}
+  let i = Math.floor(Math.random() * SPLASH.length)
+  if (i === last) i = (i + 1) % SPLASH.length
+  try { localStorage.setItem('echo-splash', String(i)) } catch {}
+  return SPLASH[i]
+}
+
 export function Startup({ error, logs, onRetry }) {
   const [slow, setSlow] = useState(false)
+  const [line] = useState(splashLine)
   useEffect(() => { const timer = setTimeout(() => setSlow(true), 4000); return () => clearTimeout(timer) }, [])
   return (
-    <div className="center-screen" style={{ alignItems: 'flex-start' }}>
+    <div className={`center-screen ${error ? '' : 'startup'}`} style={error ? { alignItems: 'flex-start' } : undefined}>
       <svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true">
         {[34, 26, 18].map((r, i) => <circle key={r} cx="36" cy="36" r={r} fill="none" stroke="var(--sodium)" strokeOpacity={0.35 + i * 0.25} strokeWidth="2.5" />)}
         <circle cx="36" cy="36" r="8" fill="var(--sodium)" />
@@ -150,7 +199,8 @@ export function Startup({ error, logs, onRetry }) {
         {logs?.length > 0 && <pre>{logs.slice(-20).join('\n')}</pre>}
       </> : <>
         <h1>Écho</h1>
-        <p className="note">{slow ? t('Premier démarrage, Écho se prépare…') : t('Démarrage…')}</p>
+        <p className="splash-line" role="status">{line}</p>
+        {slow && <p className="note" style={{ fontSize: 13.5, marginTop: 6 }}>{t('Premier démarrage, Écho se prépare…')}</p>}
       </>}
     </div>
   )

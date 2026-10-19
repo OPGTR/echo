@@ -52,7 +52,9 @@ export function SettingsHome() {
   const update = useApp(s => s.update)
   const [settings, setSettings] = useState(null)
   const [sources, setSources] = useState(null)
+  const [dislikes, setDislikes] = useState(null)
   useEffect(() => {
+    api.dislikes().then(l => setDislikes(l.length)).catch(() => {})
     api.settings().then(setSettings).catch(() => {})
     api.sources().then(setSources).catch(() => {})
   }, [])
@@ -86,12 +88,39 @@ export function SettingsHome() {
       <div className="grp">{t('Bibliothèque')}</div>
       <div className="set-card">
         <Row label={t('Dossiers de musique')} value={settings ? t('{n} dossier(s)', { n: settings.music_folders.length }) : ''} onClick={() => open({ type: 'folders' })} />
+        <Row label={t('Titres que tu n’aimes pas')} value={dislikes === null ? '' : dislikes ? String(dislikes) : t('Aucun')} onClick={() => open({ type: 'dislikes' })} />
       </div>
       <div className="grp">Écho</div>
       <div className="set-card">
         <Row label={t('Mises à jour')} value={update?.available ? t('{v} disponible', { v: update.version }) : t('À jour')} accent={!!update?.available} onClick={() => open({ type: 'update' })} />
       </div>
       <p className="note" style={{ margin: '18px 4px 0' }}>{t('Écho {v}. Moteur de téléchargement adapté de Lokal (MIT). Paroles : LRCLIB.', { v: version })}</p>
+    </div>
+  )
+}
+
+// ------------------------------------------------- songs you don't like
+export function DislikesScreen() {
+  const [list, setList] = useState(null)
+  useEffect(() => { api.dislikes().then(setList).catch(() => setList([])) }, [])
+  const restore = async item => { setList(await api.undislike({ key: item.key })); useApp.getState().toast(t('« {title} » pourra de nouveau t’être proposé.', { title: item.title })) }
+  return (
+    <div className="page">
+      <Back />
+      <div className="page-head" style={{ paddingTop: 0 }}><h1>{t('Titres que tu n’aimes pas')}</h1></div>
+      <p className="note" style={{ marginTop: 0 }}>{t('Ils ne te sont plus proposés dans tes mixes ni dans Pour toi. Touche « Remettre » pour changer d’avis.')}</p>
+      {list === null && <div className="empty"><Loader2 className="spin" /></div>}
+      {list && !list.length && <div className="empty"><strong>{t('Aucun titre écarté')}</strong>{t('Dans le menu d’un titre, choisis « Je n’aime pas ce titre ».')}</div>}
+      <div className="tracks" style={{ marginTop: 10 }}>
+        {(list || []).map(item => (
+          <div className="row" key={item.key}>
+            <div className="track" style={{ cursor: 'default' }}>
+              <span className="text"><span className="title" style={{ display: 'block' }}>{item.title}</span><span className="sub" style={{ display: 'block' }}>{item.artist}</span></span>
+            </div>
+            <button type="button" className="btn quiet small" onClick={() => restore(item)}>{t('Remettre')}</button>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -147,7 +176,8 @@ export function ThemeScreen({ focus }) {
         <div className="mini-h">{t('Couleur fixe')}</div>
         <div className="swatches" role="radiogroup" aria-label={t('Couleur fixe')}>
           {ACCENTS.map(([hex, name]) => <button key={hex} type="button" role="radio" aria-checked={prefs.accent === hex} aria-label={t(name)} style={{ background: hex }} onClick={() => choose({ accent: hex })}>{prefs.accent === hex && <Check size={18} />}</button>)}
-          <label className="swatch-any" aria-label={t('Autre couleur')}><Plus size={18} /><input type="color" value={prefs.accent} onChange={e => choose({ accent: e.target.value })} /></label>
+          {!ACCENTS.some(([hex]) => hex === prefs.accent) && <button type="button" role="radio" aria-checked="true" aria-label={prefs.accent} style={{ background: prefs.accent }} onClick={() => {}}><Check size={18} /></button>}
+          <button type="button" className="swatch-any" aria-label={t('Autre couleur')} onClick={async () => { const hex = await useApp.getState().ask({ kind: 'color', title: t('Couleur fixe'), value: prefs.accent, suggestions: ACCENTS, confirm: t('Choisir') }); if (hex) choose({ accent: hex }) }}><Plus size={18} /></button>
         </div>
       </>}
 

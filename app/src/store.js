@@ -20,6 +20,7 @@ export const useApp = create((set, get) => ({
   stack: [], // screens opened over the tab: { type, ...params }
   toasts: [],
   sheet: null, // an action sheet: { title, items: [{ label, icon, onSelect, danger }] }
+  dialog: null, // an Écho window asking for a name or a color: { kind: 'text' | 'color', ..., resolve }
   downloads: [],
   source: null,
   libraryVersion: 0,
@@ -40,6 +41,7 @@ export const useApp = create((set, get) => ({
   open: screen => set(s => ({ stack: [...s.stack, screen] })),
   back: () => {
     const s = get()
+    if (s.dialog) { s.closeDialog(null); return true }
     if (s.sheet) { set({ sheet: null }); return true }
     if (s.stack.length) { set({ stack: s.stack.slice(0, -1) }); return true }
     const start = s.prefs.startTab || 'home'
@@ -47,6 +49,9 @@ export const useApp = create((set, get) => ({
     return false
   },
   showSheet: sheet => set({ sheet }),
+  /** Asks in an Écho window; resolves with the answer, or null when cancelled. */
+  ask: dialog => new Promise(resolve => { get().dialog?.resolve(null); set({ dialog: { ...dialog, resolve } }) }),
+  closeDialog: (value = null) => { const d = get().dialog; set({ dialog: null }); d?.resolve(value) },
   closeSheet: () => set({ sheet: null }),
 
   toast: (message, action = null) => {

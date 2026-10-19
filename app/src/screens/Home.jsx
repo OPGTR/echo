@@ -108,9 +108,9 @@ export default function Home() {
         <section className="section">
           <h2>{t('À redécouvrir')}</h2>
           <p className="lead">{t('Tu les écoutais beaucoup, un peu moins aujourd’hui.')}</p>
-          <div className="tracks">
+          <div className="tracks rediscover">
             {rediscover.slice(0, 6).map((song, i) => (
-              <TrackRow key={song.local_id} song={{ ...song, artist: `${song.artist} · ${t('{n} écoutes', { n: song.play_count })}, ${sinceLabel(song.last_played)}` }} onPlay={() => playList(rediscover, i, { context: 'rediscover' })} />
+              <TrackRow key={song.local_id} number={String(i + 1).padStart(2, '0')} song={{ ...song, artist: `${song.artist} · ${t('{n} écoutes', { n: song.play_count })}, ${sinceLabel(song.last_played)}` }} onPlay={() => playList(rediscover, i, { context: 'rediscover' })} />
             ))}
           </div>
         </section>

@@ -8,12 +8,12 @@ import Search, { CatalogueAlbum, CatalogueArtist } from './screens/Search'
 import Library, { LocalAlbum, LocalArtist } from './screens/Library'
 import { Downloads, Onboarding, Startup } from './screens/Settings'
 import Playlists, { PlaylistScreen, ImportScreen, MixCreate, LikedScreen, AddSongs } from './screens/Playlists'
-import { SettingsHome, ThemeScreen, EqualizerScreen, QualityScreen, AudioTest, SourcesScreen, FoldersScreen, StartScreen, UpdateScreen } from './screens/Preferences'
+import { SettingsHome, ThemeScreen, EqualizerScreen, QualityScreen, AudioTest, SourcesScreen, FoldersScreen, StartScreen, UpdateScreen, DislikesScreen } from './screens/Preferences'
 import { DEFAULT_PREFS } from './store'
 import { applyTheme } from './theme'
 import { applyEqualizer } from './player'
 import { appInfo } from './native'
-import { TabBar, MiniPlayer, FullPlayer, ActionSheet, Toasts } from './components/Chrome'
+import { TabBar, MiniPlayer, FullPlayer, ActionSheet, Dialog, Toasts } from './components/Chrome'
 
 function Screen() {
   const tab = useApp(s => s.tab)
@@ -40,6 +40,7 @@ function Screen() {
       case 'add-songs': return <AddSongs id={top.id} />
       case 'import': return <ImportScreen />
       case 'mix-create': return <MixCreate />
+      case 'dislikes': return <DislikesScreen />
       default: return null
     }
   }
@@ -112,17 +113,31 @@ export default function App() {
   const top = useApp(s => s.stack.length + ':' + s.tab)
   useEffect(() => { document.querySelector('.page')?.scrollTo(0, 0) }, [top])
 
+  // The dock (mini player, tabs) floats over the page in some themes: the
+  // page keeps room for it at the end.
+  const dockRef = React.useRef(null)
+  useEffect(() => {
+    const el = dockRef.current
+    if (!el || !window.ResizeObserver) return
+    const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--dock-h', `${Math.ceil(el.getBoundingClientRect().height)}px`))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [phase])
+  // Some screens are a step to finish (create a mix): no tabs under them.
+  const focused = useApp(s => ['mix-create'].includes(s.stack[s.stack.length - 1]?.type))
+
   if (phase === 'starting' || phase === 'failed') return <Startup error={phase === 'failed' ? error : ''} logs={logs} onRetry={start} />
   if (phase === 'onboarding') return <Onboarding onDone={() => setPhase('ready')} />
   return (
     <div className="app">
       <Screen />
-      <div className="dock">
+      <div className="dock" ref={dockRef} hidden={focused}>
         <MiniPlayer />
         <TabBar />
       </div>
       <FullPlayer />
       <ActionSheet />
+      <Dialog />
       <Toasts />
     </div>
   )

@@ -4,7 +4,7 @@
 //   ◔ arc     downloading
 //   ◎ pulse   playing now
 import React from 'react'
-import { MoreVertical, Music2, Play, ListPlus, ListEnd, Download, User, Disc3, Trash2, Heart, ListMusic, Plus, MinusCircle } from 'lucide-react'
+import { MoreVertical, Music2, Play, ListPlus, ListEnd, Download, User, Disc3, Trash2, Heart, ListMusic, Plus, MinusCircle, ThumbsDown } from 'lucide-react'
 import { useApp } from '../store'
 import { usePlayer, keyOf, coverOf, playNext, addToQueue, toggleLike, playList } from '../player'
 import { api } from '../api'
@@ -55,12 +55,27 @@ export function songMenu(song, { playlistId = null, onChanged = null } = {}) {
     const liked = usePlayer.getState().liked[song.local_id] ?? !!song.liked
     items.push({ label: liked ? t('Retirer des titres aimés') : t('Ajouter aux titres aimés'), icon: Heart, onSelect: () => toggleLike(song.local_id) })
   }
+  items.push({ label: t('Je n’aime pas ce titre'), detail: t('Il ne te sera plus proposé'), icon: ThumbsDown, accent: true, onSelect: () => dislikeSong(song) })
   if (!song.local_id && song.deezer_id) items.push({ label: t('Télécharger'), icon: Download, onSelect: () => downloadSongs([song]) })
   if (song.artist) items.push({ label: t('Aller à l’artiste'), icon: User, onSelect: () => goToArtist(song) })
   if (song.album_id) items.push({ label: t('Aller à l’album'), icon: Disc3, onSelect: () => app.open({ type: 'catalogue-album', id: song.album_id }) })
   else if (song.local_id && song.album) items.push({ label: t('Aller à l’album'), icon: Disc3, onSelect: () => app.open({ type: 'album', album: song.album, artist: song.album_artist || song.artist }) })
   if (song.local_id) items.push({ label: t('Supprimer du téléphone'), icon: Trash2, danger: true, onSelect: async () => { const r = await api.remove(song.local_id).catch(e => ({ error: e.message })); if (r?.error) app.toast(r.error); app.libraryChanged() } })
   app.showSheet({ title: song.title, subtitle: song.artist, items })
+}
+
+/** "Je n'aime pas ce titre": never proposed again (mixes, Pour toi). */
+export async function dislikeSong(song) {
+  const app = useApp.getState()
+  try {
+    await api.dislike(song)
+    app.toast(t('« {title} » ne te sera plus proposé.', { title: song.title }), { label: t('Annuler'), run: () => api.undislike(song).catch(() => {}) })
+  } catch (e) { app.toast(e.message) }
+}
+
+/** The name of a new playlist, asked in an Écho window. */
+export function askPlaylistName(value = '', { title = t('Nouvelle playlist'), confirm = t('Créer') } = {}) {
+  return useApp.getState().ask({ kind: 'text', title, label: t('Nom de la playlist'), value, placeholder: t('Ma playlist'), hint: t('Tu pourras la renommer plus tard.'), confirm })
 }
 
 /** Which playlist? (or a new one) */
@@ -76,7 +91,7 @@ export async function addToPlaylistMenu(songs) {
     subtitle: songs.length === 1 ? `${songs[0].title} · ${songs[0].artist}` : t('{n} titres', { n: songs.length }),
     items: [
       { label: t('Nouvelle playlist'), icon: Plus, onSelect: async () => {
-        const name = window.prompt(t('Nom de la playlist'), '')
+        const name = await askPlaylistName('')
         if (name === null) return
         try { const pl = await api.createPlaylist(name || t('Nouvelle playlist'), songs); app.toast(t('Playlist « {name} » créée.', { name: pl.name })) } catch (e) { app.toast(e.message) }
       } },

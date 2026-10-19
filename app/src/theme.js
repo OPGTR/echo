@@ -2,6 +2,7 @@
 // phone's wallpaper colors) and a fixed color of your choice. Each sets the
 // color tokens; glass and Luce also change surfaces (styles.css).
 import { dynamicColors } from './native'
+import { liquidGlass } from './glass'
 
 const root = () => document.documentElement
 
@@ -22,6 +23,7 @@ export async function applyTheme(prefs = {}) {
   const theme = prefs.theme || 'indigo'
   VARS.forEach(v => el.style.removeProperty(v))
   el.dataset.theme = theme === 'material' || theme === 'fixed' ? 'indigo' : theme
+  liquidGlass(theme === 'glass')
   let accent = null
   if (theme === 'fixed') accent = prefs.accent || '#f2c14e'
   if (theme === 'material') {

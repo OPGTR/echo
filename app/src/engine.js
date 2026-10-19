@@ -32,6 +32,7 @@ function nativeEngine() {
     native: true,
     async load(item, next, { play = true, position = 0 } = {}) { startPolling(); await EchoPlayer.load({ item, next: next || null, play, position }) },
     setNext: next => EchoPlayer.setNext({ next: next || null }).catch(() => {}),
+    setLibrary: items => EchoPlayer.setLibrary({ items }).catch(() => {}),
     play: () => EchoPlayer.play().catch(() => {}),
     pause: () => EchoPlayer.pause().catch(() => {}),
     seek: position => EchoPlayer.seek({ position }).catch(() => {}),
@@ -107,6 +108,7 @@ function webEngine() {
       if (play) { buildGraph(); graph?.ctx.resume?.(); await audio.play() }
     },
     setNext: n => { next = n || null },
+    setLibrary: () => {},
     play: () => { buildGraph(); graph?.ctx.resume?.(); return audio.play().catch(() => {}) },
     pause: () => audio.pause(),
     seek: s => { if (audio.src && Number.isFinite(s)) audio.currentTime = Math.max(0, s) },
