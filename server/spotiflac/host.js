@@ -320,7 +320,7 @@ class ExtensionHost {
       if(action==='buildFilename')return sanitize(String(args[0]).replace(/\{([^}]+)\}/g,(_,key)=>args[1]?.[key] ?? ''))
       if(action==='getLocalTime'){const now=new Date();return {hour:now.getHours(),minute:now.getMinutes(),second:now.getSeconds(),timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,offset:-now.getTimezoneOffset()*60}}
       if(action==='getAudioQuality')return mediaInfo(this.file(args[0]),this.tools,this.signal)
-      if(action==='checkISRCExists'){const row=this.db?.prepare("SELECT file_path FROM tracks WHERE isrc = ? AND file_path NOT LIKE 'ghost://%' LIMIT 1").get(String(args[1]));return {exists:!!row,file_path:row?.file_path || ''}}
+      if(action==='checkISRCExists')return {exists:false,file_path:''} // Écho checks its own library before downloading
       if(action==='addToISRCIndex')return {success:true}
       if(action==='getLyricsLRC'){const lyrics=null;const lrc=lyrics?require('../lyrics/embedded').toPortableLyrics(lyrics):'';return {lyrics:lrc,lrc}}
     }

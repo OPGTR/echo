@@ -191,6 +191,73 @@ function ffmpegInfo(file) {
   })
 }
 
+/**
+ * Reads only what playback needs from an MP4/M4A (codec, rate, channels,
+ * duration) by walking the boxes down to the audio track. Metadata boxes
+ * (udta, meta) are skipped: a badly written tag there (a size counted in
+ * characters instead of bytes, common with non-Latin titles) makes stricter
+ * readers fail with "FourCC contains invalid characters".
+ */
+function mp4Info(file) {
+  const fd = fs.openSync(file, 'r')
+  try {
+    const size = fs.fstatSync(fd).size
+    const read = (pos, len) => { const b = Buffer.alloc(len); fs.readSync(fd, b, 0, len, pos); return b }
+    const boxes = (start, end) => {
+      const out = []
+      for (let pos = start; pos + 8 <= end;) {
+        const h = read(pos, 16)
+        let len = h.readUInt32BE(0), head = 8
+        const type = h.toString('latin1', 4, 8)
+        if (len === 1) { len = Number(h.readBigUInt64BE(8)); head = 16 } else if (len === 0) len = end - pos
+        if (len < head || pos + len > end) break
+        out.push({ type, start: pos + head, end: pos + len })
+        pos += len
+      }
+      return out
+    }
+    const find = (list, type) => list.find(b => b.type === type)
+    const moov = find(boxes(0, size), 'moov')
+    if (!moov) return null
+    for (const trak of boxes(moov.start, moov.end).filter(b => b.type === 'trak')) {
+      const mdia = find(boxes(trak.start, trak.end), 'mdia'); if (!mdia) continue
+      const inner = boxes(mdia.start, mdia.end)
+      const hdlr = find(inner, 'hdlr'); if (!hdlr || read(hdlr.start + 8, 4).toString('latin1') !== 'soun') continue
+      const mdhd = find(inner, 'mdhd'); let duration
+      if (mdhd) {
+        const v = read(mdhd.start, 1)[0]
+        const b = read(mdhd.start, 32)
+        const scale = v === 1 ? b.readUInt32BE(20) : b.readUInt32BE(12)
+        const dur = v === 1 ? Number(b.readBigUInt64BE(24)) : b.readUInt32BE(16)
+        if (scale) duration = dur / scale
+      }
+      const minf = find(inner, 'minf'); const stbl = minf && find(boxes(minf.start, minf.end), 'stbl')
+      const stsd = stbl && find(boxes(stbl.start, stbl.end), 'stsd'); if (!stsd) continue
+      const entry = read(stsd.start + 8, 36)
+      const fourcc = entry.toString('latin1', 4, 8)
+      const codec = { mp4a: 'aac', alac: 'alac', fLaC: 'flac', Opus: 'opus', 'ac-3': 'ac3', 'ec-3': 'eac3', '.mp3': 'mp3' }[fourcc] || fourcc
+      const channels = entry.readUInt16BE(24), bits = entry.readUInt16BE(26), rate = entry.readUInt32BE(32) >>> 16
+      return { codec, container: 'mp4', sampleRate: rate || undefined, numberOfChannels: channels || 2, bitsPerSample: codec === 'aac' ? undefined : bits || undefined, duration, bitrate: duration ? size * 8 / duration : undefined }
+    }
+    return null
+  } catch { return null } finally { fs.closeSync(fd) }
+}
+
+/** FLAC's STREAMINFO block, read directly. */
+function flacInfo(file) {
+  const fd = fs.openSync(file, 'r')
+  try {
+    const b = Buffer.alloc(42); fs.readSync(fd, b, 0, 42, 0)
+    if (b.toString('latin1', 0, 4) !== 'fLaC' || (b[4] & 0x7f) !== 0) return null
+    const si = b.subarray(8)
+    const rate = (si[10] << 12) | (si[11] << 4) | (si[12] >> 4)
+    const channels = ((si[12] >> 1) & 7) + 1
+    const bits = (((si[12] & 1) << 4) | (si[13] >> 4)) + 1
+    const samples = (si[13] & 0x0f) * 2 ** 32 + si.readUInt32BE(14)
+    return { codec: 'flac', container: 'flac', sampleRate: rate, numberOfChannels: channels, bitsPerSample: bits, duration: rate && samples ? samples / rate : undefined }
+  } catch { return null } finally { fs.closeSync(fd) }
+}
+
 async function readFormat(file) {
   const mm = require('music-metadata')
   try {
@@ -201,6 +268,8 @@ async function readFormat(file) {
     if (kind) {
       try { return await mm.parseStream(fs.createReadStream(file), { mimeType: kind.mime, size: fs.statSync(file).size }, { duration: true, skipCovers: true }) } catch {}
     }
+    const direct = kind?.ext === '.m4a' ? mp4Info(file) : kind?.ext === '.flac' ? flacInfo(file) : null
+    if (direct) return { format: direct, common: {} }
     const info = await ffmpegInfo(file)
     if (info) return { format: info, common: {} }
     throw first
@@ -314,4 +383,4 @@ function install() {
   }
 }
 
-module.exports = { sniff, install, probe, codecName }
+module.exports = { mp4Info, flacInfo, sniff, install, probe, codecName }

@@ -1,5 +1,5 @@
 'use strict'
-// New versions of Écho: the APKs on the GitHub release "latest". Downloaded
+// New versions of Écho: the APKs of the newest GitHub release (one per version). Downloaded
 // here; the app hands the file to Android's installer.
 const fs = require('fs')
 const path = require('path')
@@ -7,7 +7,7 @@ const { pipeline } = require('stream/promises')
 const { Readable } = require('stream')
 const { dataDir } = require('./paths')
 
-const RELEASE = process.env.ECHO_RELEASE_API || 'https://api.github.com/repos/OPGTR/echo/releases/tags/latest'
+const RELEASE = process.env.ECHO_RELEASE_API || 'https://api.github.com/repos/OPGTR/echo/releases/latest'
 let cache = null
 let job = { state: 'idle', progress: 0, file: null, error: null }
 

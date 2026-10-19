@@ -13,6 +13,7 @@ const sources = require('./sources')
 const { forYou, songKey, topArtists, customMix } = require('./foryou')
 const playlists = require('./playlists')
 const follows = require('./follows')
+const dislikes = require('./dislikes')
 const lyrics = require('./lyrics')
 const updates = require('./update')
 const http = require('http')
@@ -236,6 +237,9 @@ function createApp() {
   }))
 
   // -------------------------------------------------------------- follows
+  app.get('/api/dislikes', wrap(() => dislikes.list()))
+  app.post('/api/dislikes', wrap(req => dislikes.add(req.body || {})))
+  app.post('/api/dislikes/remove', wrap(req => dislikes.remove(req.body || {})))
   app.get('/api/follows', wrap(async req => { await follows.refresh({ force: req.query.force === '1' }).catch(() => {}); return follows.list() }))
   app.post('/api/follows', wrap(req => follows.follow(req.body || {})))
   app.delete('/api/follows/:id', wrap(req => follows.unfollow(req.params.id)))

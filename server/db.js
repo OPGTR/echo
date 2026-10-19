@@ -63,6 +63,13 @@ CREATE TABLE IF NOT EXISTS playlist_items (
   added_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS playlist_items_pl ON playlist_items (playlist_id, pos);
+CREATE TABLE IF NOT EXISTS dislikes (
+  key TEXT PRIMARY KEY,
+  deezer_id TEXT,
+  title TEXT NOT NULL, artist TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS dislikes_deezer ON dislikes (deezer_id);
 CREATE TABLE IF NOT EXISTS follows (
   artist_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

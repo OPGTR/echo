@@ -12,6 +12,7 @@ const path = require('path')
 const deezer = require('./deezer')
 const { getDB, getSetting } = require('./db')
 const { dataDir } = require('./paths')
+const dislikes = require('./dislikes')
 
 const DAY = 24 * 60 * 60 * 1000
 const MIX_SIZE = 30
@@ -125,7 +126,8 @@ async function build(db, { now = Date.now(), era = 'both' } = {}) {
   const random = rng(date)
   const { owned, byArtist } = library(db)
   const used = new Set()
-  const fresh = t => { const k = songKey(t.artist, t.title); return t.title && t.artist && !owned.has(k) && !used.has(k) }
+  const disliked = dislikes.filter()
+  const fresh = t => { const k = songKey(t.artist, t.title); return t.title && t.artist && !owned.has(k) && !used.has(k) && !disliked(t) }
   const take = t => { used.add(songKey(t.artist, t.title)); return t }
 
   const top = seeds(db, now).slice(0, 12)
@@ -138,7 +140,7 @@ async function build(db, { now = Date.now(), era = 'both' } = {}) {
     const groups = await mapLimited([artist, ...around], a => artistSongs(a.id, era, { now }), 4)
     const picks = []
     groups.forEach((g, i) => picks.push(...shuffle((g || []).filter(fresh), random).slice(0, i === 0 ? 3 : 4)))
-    const mine = shuffle(byArtist.get(norm(seed.name)) || [], random).slice(0, OWNED_PER_MIX).map(localSong)
+    const mine = shuffle((byArtist.get(norm(seed.name)) || []).filter(t => !disliked(t)), random).slice(0, OWNED_PER_MIX).map(localSong)
     const tracks = spread(shuffle([...picks.slice(0, MIX_SIZE - mine.length), ...mine], random)).map(take)
     if (tracks.length >= 6) {
       mixes[index] = { id: `daily-${index + 1}`, kind: 'daily', index: index + 1, seed: seed.name, artists: [artist.name, ...around.map(a => a.name)].slice(0, 4), covers: coversOf(tracks), tracks }
@@ -187,6 +189,8 @@ async function forYou({ force = false, now = Date.now(), era = null } = {}) {
   }
   // Downloaded since: the song is now yours (plays offline, from the library).
   const { owned } = library(db)
+  const disliked = dislikes.filter()
+  result = { ...result, mixes: result.mixes.map(m => ({ ...m, tracks: m.tracks.filter(t => !disliked(t)) })) }
   const byDeezer = new Map(db.prepare('SELECT id, deezer_id, art IS NOT NULL AS has_art FROM tracks WHERE deezer_id IS NOT NULL').all().map(r => [r.deezer_id, r]))
   for (const mix of result.mixes) {
     for (const t of mix.tracks) {
@@ -195,7 +199,7 @@ async function forYou({ force = false, now = Date.now(), era = null } = {}) {
       if (own) { t.local_id = own.id; t.has_art = own.has_art }
     }
   }
-  return { ...result, rediscover: rediscover(db, { now }) }
+  return { ...result, rediscover: rediscover(db, { now }).filter(t => !disliked(t)) }
 }
 
 /**
@@ -231,11 +235,12 @@ async function customMix(picked = [], { era = 'both', now = Date.now() } = {}) {
   const neighbours = []
   relatedBy.forEach(list => shuffle((list || []).slice(0, 8), random).slice(0, 3).forEach(a => { if (!artists.some(x => String(x.id) === String(a.id)) && !neighbours.some(n => n.id === a.id)) neighbours.push(a) }))
   const used = new Set()
-  const fresh = t => { const k = songKey(t.artist, t.title); if (used.has(k)) return false; used.add(k); return true }
+  const disliked = dislikes.filter()
+  const fresh = t => { const k = songKey(t.artist, t.title); if (used.has(k) || disliked(t)) return false; used.add(k); return true }
   const groups = await mapLimited([...artists, ...neighbours], a => artistSongs(a.id, era, { now }), 4)
   const picks = []
   groups.forEach((g, i) => picks.push(...shuffle((g || []).filter(fresh), random).slice(0, i < artists.length ? 7 : 3)))
-  const mine = artists.flatMap(a => shuffle(byArtist.get(norm(a.name)) || [], random).slice(0, 2)).map(localSong)
+  const mine = artists.flatMap(a => shuffle((byArtist.get(norm(a.name)) || []).filter(t => !disliked(t)), random).slice(0, 2)).map(localSong)
   const tracks = spread(shuffle([...picks.slice(0, 30 - mine.length), ...mine], random)).map(t => {
     const own = !t.local_id && owned.get(songKey(t.artist, t.title))
     return own ? { ...t, local_id: own.id, has_art: own.has_art } : t

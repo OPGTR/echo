@@ -76,6 +76,20 @@ const api = async (p, body, method) => {
 const until = async (fn, ms = 30000) => { const end = Date.now() + ms; for (;;) { const v = await fn(); if (v || Date.now() > end) return v; await sleep(300) } }
 
 try {
+  // ---------------------------------------------- 0.1: files that are hard to read
+  {
+    const { createRequire } = await import('node:module')
+    const req = createRequire(import.meta.url)
+    const tools = req('../server/platform/tools.js')
+    const m4a = path.join(tmp, 'broken-tag.m4a')
+    execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'sine=f=440:d=5', '-c:a', 'aac', '-metadata', 'title=뚜두뚜두 DDU-DU', '-y', m4a])
+    const b = fs.readFileSync(m4a); const at = b.indexOf('ilst') + 4; b.writeUInt32BE(0x0ea9b96f, at); fs.writeFileSync(m4a, b)
+    const probed = await tools.probe(m4a).catch(e => ({ error: e.message }))
+    ok('an M4A with a broken tag is still read (DDU-DU)', probed.streams?.[0]?.codec_name === 'aac' && Math.round(Number(probed.format.duration)) === 5, JSON.stringify(probed).slice(0, 160))
+    const { parseLrc } = req('../server/lyrics.js')
+    const lrc = parseLrc('[offset:+500]\n[00:01.50]a\n[00:02:30]b\n[00:03]c')
+    ok('lyrics: [mm:ss:xx], [mm:ss] and [offset] are understood', lrc.map(l => l.t).join() === '1,1.8,2.5', JSON.stringify(lrc))
+  }
   ok('server starts', !!await until(async () => { try { return (await api('/health')).ok } catch { return false } }, 20000))
   // Token required outside dev mode is checked by the CI (unauthorized without it) below.
 
@@ -194,6 +208,17 @@ try {
   ok('your artists for "Ton mix"', Array.isArray(tops) && tops.some(a => a.name === 'Daft Punk'))
   const custom = await api('/mixes/custom', { artists: [{ id: '27', name: 'Daft Punk' }, { id: '145', name: 'Beyoncé' }], era: 'both' })
   ok('"Ton mix" from 2 artists, kept as a playlist', custom.kind === 'mix' && custom.count >= 6, `${custom.count} ${custom.error || ''}`)
+  // -------------------------------------------------- 0.1: "Je n'aime pas ce titre"
+  const customItems = custom.tracks || []
+  const hated = customItems.find(t => !t.local_id) || customItems[0]
+  const disl = await api('/dislikes', { title: hated?.title, artist: hated?.artist, deezer_id: hated?.deezer_id })
+  ok('a song you dislike is kept aside', disl.length === 1 && disl[0].title === hated?.title, JSON.stringify(disl).slice(0, 160))
+  const again = await api('/mixes/custom', { artists: [{ id: '27', name: 'Daft Punk' }, { id: '145', name: 'Beyoncé' }], era: 'both' })
+  const againItems = again.tracks || []
+  ok('it is not proposed again in a mix', againItems.length > 0 && !againItems.some(t => t.title === hated.title && t.artist === hated.artist), `${againItems.length} items`)
+  const fyNo = await api('/foryou')
+  ok('nor in Pour toi', !(fyNo.mixes || []).some(m => m.tracks.some(t => t.title === hated.title && t.artist === hated.artist)))
+  ok('and can be taken back', (await api('/dislikes/remove', { title: hated.title, artist: hated.artist })).length === 0)
   await api('/settings', { mix_era: 'recent' }, 'PUT')
   const fyRecent = await api('/foryou')
   ok('Pour toi with "recent" songs only (rebuilt, no crash)', fyRecent.era === 'recent' && Array.isArray(fyRecent.mixes), fyRecent.error)
