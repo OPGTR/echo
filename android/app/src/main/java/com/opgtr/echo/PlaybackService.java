@@ -23,15 +23,24 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.extractor.DefaultExtractorsFactory;
+import androidx.media3.session.LibraryResult;
+import androidx.media3.session.MediaLibraryService;
 import androidx.media3.session.MediaSession;
-import androidx.media3.session.MediaSessionService;
+
+import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 
 import com.google.android.gms.cast.framework.CastContext;
 
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -43,8 +52,14 @@ import java.util.List;
  * The app tells it what to play (the current song, and the next one when it's
  * already on the phone, so songs follow each other even if the app is asleep).
  * "Previous"/"next" from the notification go to the app, which knows the queue.
+ *
+ * It is also a media library (Android Auto, car screens, Bluetooth browsing):
+ * the songs coming next, as the app last described them, can be browsed and
+ * picked from the car; the car's buttons and steering-wheel controls drive the
+ * same session.
  */
-public class PlaybackService extends MediaSessionService {
+@UnstableApi
+public class PlaybackService extends MediaLibraryService {
     private static final String TAG = "EchoPlayback";
     static PlaybackService instance;
 
@@ -57,7 +72,10 @@ public class PlaybackService extends MediaSessionService {
     private ExoPlayer exo;
     private CastPlayer castPlayer;
     private Player active;
-    private MediaSession session;
+    private MediaLibrarySession session;
+    // The queue as the app last described it, for car screens.
+    private final List<Item> library = new ArrayList<>();
+    static final String ROOT = "echo-root", QUEUE = "echo-queue";
     private int audioSession = 0;
     private DynamicsProcessing dynamics;
     private Equalizer equalizer;
@@ -97,7 +115,13 @@ public class PlaybackService extends MediaSessionService {
         instance = this;
         AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         audioSession = am != null ? am.generateAudioSessionId() : 0;
+        // Files without a seek index (raw AAC, some MP3s) can still be
+        // seeked: the karaoke lines and the progress bar rely on it.
+        DefaultExtractorsFactory extractors = new DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+            .setConstantBitrateSeekingAlwaysEnabled(true);
         exo = new ExoPlayer.Builder(this)
+            .setMediaSourceFactory(new DefaultMediaSourceFactory(this, extractors))
             .setAudioAttributes(new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -109,7 +133,7 @@ public class PlaybackService extends MediaSessionService {
         Intent open = new Intent(this, MainActivity.class);
         open.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent activity = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        session = new MediaSession.Builder(this, new AppControlledPlayer(exo)).setSessionActivity(activity).build();
+        session = new MediaLibrarySession.Builder(this, new AppControlledPlayer(exo), libraryCallback).setSessionActivity(activity).build();
         applyEqualizer();
 
         try {
@@ -128,7 +152,7 @@ public class PlaybackService extends MediaSessionService {
 
     @Nullable
     @Override
-    public MediaSession onGetSession(@NonNull MediaSession.ControllerInfo controllerInfo) {
+    public MediaLibrarySession onGetSession(@NonNull MediaSession.ControllerInfo controllerInfo) {
         return session;
     }
 
@@ -183,6 +207,24 @@ public class PlaybackService extends MediaSessionService {
                 getWrappedPlayer().play();
             } else {
                 emit("remote", json("action", "next"));
+                // The app may be asleep (phone locked, in the car): if it
+                // hasn't moved on shortly, play the next song that is here.
+                final MediaItem from = getWrappedPlayer().getCurrentMediaItem();
+                final String fromId = from != null ? from.mediaId : null;
+                main.postDelayed(() -> {
+                    if (active == null || fromId == null) return;
+                    MediaItem now = active.getCurrentMediaItem();
+                    if (now == null || !fromId.equals(now.mediaId)) return;
+                    Item following = null;
+                    boolean seen = false;
+                    for (Item i : library) {
+                        if (seen && i.url != null) { following = i; break; }
+                        if (fromId.equals(i.id)) seen = true;
+                    }
+                    if (following == null) return;
+                    load(following, null, 0, true);
+                    emit("remote", jump(following.id));
+                }, 2500);
             }
         }
 
@@ -369,6 +411,86 @@ public class PlaybackService extends MediaSessionService {
         try { if (equalizer != null) equalizer.release(); } catch (Exception ignored) {}
         dynamics = null;
         equalizer = null;
+    }
+
+
+    // ------------------------------------------------------------ library
+    /** The songs coming next (from the app): what a car screen can browse. */
+    void setLibrary(List<Item> list) {
+        library.clear();
+        library.addAll(list);
+        if (session != null) session.notifyChildrenChanged(QUEUE, library.size(), null);
+    }
+
+    private MediaItem browsable(String id, String title) {
+        return new MediaItem.Builder().setMediaId(id).setMediaMetadata(new MediaMetadata.Builder()
+            .setTitle(title).setIsBrowsable(true).setIsPlayable(false)
+            .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED).build()).build();
+    }
+
+    private Item find(String id) {
+        for (Item i : library) if (i.id != null && i.id.equals(id)) return i;
+        for (Item i : items) if (i.id != null && i.id.equals(id)) return i;
+        return null;
+    }
+
+    private final MediaLibrarySession.Callback libraryCallback = new MediaLibrarySession.Callback() {
+        @NonNull
+        @Override
+        public ListenableFuture<LibraryResult<MediaItem>> onGetLibraryRoot(@NonNull MediaLibrarySession s, @NonNull MediaSession.ControllerInfo browser, @Nullable LibraryParams params) {
+            return Futures.immediateFuture(LibraryResult.ofItem(browsable(ROOT, "Écho"), params));
+        }
+
+        @NonNull
+        @Override
+        public ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> onGetChildren(@NonNull MediaLibrarySession s, @NonNull MediaSession.ControllerInfo browser, @NonNull String parentId, int page, int pageSize, @Nullable LibraryParams params) {
+            List<MediaItem> out = new ArrayList<>();
+            if (ROOT.equals(parentId)) out.add(browsable(QUEUE, "À suivre"));
+            else if (QUEUE.equals(parentId)) for (Item i : library) out.add(i.toMediaItem(false));
+            int from = Math.max(0, page * Math.max(1, pageSize));
+            List<MediaItem> slice = from >= out.size() ? Collections.emptyList() : out.subList(from, Math.min(out.size(), from + Math.max(1, pageSize)));
+            return Futures.immediateFuture(LibraryResult.ofItemList(ImmutableList.copyOf(slice), params));
+        }
+
+        @NonNull
+        @Override
+        public ListenableFuture<LibraryResult<MediaItem>> onGetItem(@NonNull MediaLibrarySession s, @NonNull MediaSession.ControllerInfo browser, @NonNull String mediaId) {
+            Item i = find(mediaId);
+            if (i == null) return Futures.immediateFuture(LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE));
+            return Futures.immediateFuture(LibraryResult.ofItem(i.toMediaItem(false), null));
+        }
+
+        /** A song picked on the car screen: it plays here, and the app follows. */
+        @NonNull
+        @Override
+        public ListenableFuture<List<MediaItem>> onAddMediaItems(@NonNull MediaSession s, @NonNull MediaSession.ControllerInfo controller, @NonNull List<MediaItem> mediaItems) {
+            List<MediaItem> out = new ArrayList<>();
+            for (MediaItem m : mediaItems) {
+                Item i = find(m.mediaId);
+                if (i == null) continue;
+                out.add(i.toMediaItem(isCasting()));
+                items.clear();
+                items.add(i);
+                emit("remote", jump(i.id));
+            }
+            return Futures.immediateFuture(out);
+        }
+
+        /** Play pressed in the car with nothing loaded: the last song again. */
+        @NonNull
+        @Override
+        public ListenableFuture<MediaSession.MediaItemsWithStartPosition> onPlaybackResumption(@NonNull MediaSession s, @NonNull MediaSession.ControllerInfo controller) {
+            List<MediaItem> list = new ArrayList<>();
+            for (Item i : items) list.add(i.toMediaItem(false));
+            if (list.isEmpty() && !library.isEmpty()) list.add(library.get(0).toMediaItem(false));
+            return Futures.immediateFuture(new MediaSession.MediaItemsWithStartPosition(list, 0, C.TIME_UNSET));
+        }
+    };
+
+    private static JSONObject jump(String id) {
+        JSONObject o = new JSONObject();
+        try { o.put("action", "jump"); o.put("id", id); } catch (Exception ignored) {}
+        return o;
     }
 
     // ------------------------------------------------------------ events

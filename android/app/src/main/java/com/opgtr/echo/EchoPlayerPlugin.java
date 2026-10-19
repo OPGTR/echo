@@ -128,6 +128,20 @@ public class EchoPlayerPlugin extends Plugin {
         withService(call, s -> { s.setNext(next); call.resolve(); });
     }
 
+    /** The songs coming next, for car screens (Android Auto, Bluetooth browsing). */
+    @PluginMethod
+    public void setLibrary(PluginCall call) {
+        List<PlaybackService.Item> list = new ArrayList<>();
+        try {
+            JSArray arr = call.getArray("items");
+            if (arr != null) for (int k = 0; k < arr.length() && k < 100; k++) {
+                PlaybackService.Item it = item(arr.getJSONObject(k));
+                if (it != null) list.add(it);
+            }
+        } catch (Exception ignored) {}
+        withService(call, s -> { s.setLibrary(list); call.resolve(); });
+    }
+
     @PluginMethod public void play(PluginCall call) { withService(call, s -> { s.play(); call.resolve(); }); }
     @PluginMethod public void pause(PluginCall call) { withService(call, s -> { s.pause(); call.resolve(); }); }
     @PluginMethod public void stop(PluginCall call) { withService(call, s -> { s.stopPlayback(); call.resolve(); }); }
