@@ -1,7 +1,7 @@
 name: Android APK
 
-# Builds Écho and publishes the APKs on the "latest" pre-release,
-# ready to download on the phone.
+# Builds Écho. On main, each version gets its own release (v0.1.0, …) with
+# its patch notes (release-notes/<version>.md); older versions are kept.
 on:
   push:
     branches: [main, 'dev/**']
@@ -22,6 +22,8 @@ jobs:
       ECHO_VERSION_CODE: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -109,17 +111,57 @@ jobs:
           name: echo-android-${{ env.ECHO_VERSION_NAME }}
           path: out/*.apk
 
-      - name: Publish on the "latest" pre-release
+      - name: Publish the version (its own release, older ones kept)
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="Écho pour Android, version ${ECHO_VERSION_NAME} ($(git rev-parse --short HEAD)).
+          set -e
+          version=$(node -p "require('./package.json').version")
+          tag="v${version}"
+          git fetch --tags --force --quiet
+          pick=$'\n\n---\nQuel fichier ? La plupart des téléphones : **arm64-v8a**. Anciens téléphones 32 bits : armeabi-v7a. Émulateurs et Chromebooks : x86_64.'
 
-          Quel fichier ? La plupart des téléphones : **arm64-v8a**. Anciens téléphones 32 bits : armeabi-v7a. Émulateurs et Chromebooks : x86_64."
-          gh release view latest > /dev/null 2>&1 || gh release create latest --prerelease --title "Écho" --notes "$notes" --target "$GITHUB_SHA"
+          # 1. The version that was on "latest" until now gets its own release
+          #    (once), with its APKs, before "latest" moves on.
+          if gh release view latest > /dev/null 2>&1; then
+            old_title=$(gh release view latest --json name -q .name)
+            old_full=$(echo "$old_title" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)
+            old_version=${old_full%.*}
+            if [ -n "$old_version" ] && [ "$old_version" != "$version" ] && ! gh release view "v${old_version}" > /dev/null 2>&1; then
+              mkdir -p archive
+              gh release download latest --pattern 'Echo-*.apk' --dir archive
+              old_sha=$(git rev-list -n 1 refs/tags/latest)
+              notes_file="release-notes/${old_version}.md"
+              if [ -f "$notes_file" ]; then old_notes="$(cat "$notes_file")"; else old_notes="Écho ${old_version}."; fi
+              gh release create "v${old_version}" archive/*.apk --title "Écho ${old_full}" --target "$old_sha" --latest=false \
+                --notes "${old_notes}${pick}"$'\n\n'"Build ${old_full} ($(git rev-parse --short "$old_sha"))."
+            fi
+          fi
+
+          # 2. This version: its own release with real patch notes. A new build
+          #    of the same version replaces the files on it.
+          notes_file="release-notes/${version}.md"
+          if [ -f "$notes_file" ]; then notes="$(cat "$notes_file")"; else notes="Écho ${version}."; fi
+          prev=$(gh release list --limit 50 --json tagName -q '.[].tagName' | grep -E '^v[0-9]' | grep -vx "$tag" | sort -V | tail -1 || true)
+          changelog=""
+          if [ -n "$prev" ]; then changelog=$'\n\n'"**Toutes les modifications :** [${prev}...${tag}](https://github.com/${GITHUB_REPOSITORY}/compare/${prev}...${tag})"; fi
+          body="${notes}${changelog}${pick}"$'\n\n'"versionName : ${ECHO_VERSION_NAME} · versionCode : ${{ github.run_number }} · commit $(git rev-parse --short HEAD)"
+          git tag -f "$tag" "$GITHUB_SHA" && git push -f origin "refs/tags/${tag}"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release edit "$tag" --title "Écho ${version}" --notes "$body" --latest
+            for old in $(gh release view "$tag" --json assets -q '.assets[].name'); do gh release delete-asset "$tag" "$old" -y; done
+            gh release upload "$tag" out/*.apk --clobber
+          else
+            gh release create "$tag" out/*.apk --title "Écho ${version}" --notes "$body" --target "$GITHUB_SHA" --latest
+          fi
+
+          # 3. "latest" stays for the apps that still look there (0.0.2 and
+          #    older): it carries the newest APKs too.
+          gh release view latest > /dev/null 2>&1 || gh release create latest --prerelease --title "Écho" --notes "Canal de mise à jour" --target "$GITHUB_SHA"
           git tag -f latest "$GITHUB_SHA" && git push -f origin refs/tags/latest
-          gh release edit latest --prerelease --title "Écho ${ECHO_VERSION_NAME}" --notes "$notes"
+          gh release edit latest --prerelease --latest=false --title "Écho ${ECHO_VERSION_NAME} (canal de mise à jour)" \
+            --notes "Canal de mise à jour automatique des anciennes versions d’Écho. Les notes de version sont sur [${tag}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}).${pick}"
           for old in $(gh release view latest --json assets -q '.assets[].name'); do gh release delete-asset latest "$old" -y; done
           gh release upload latest out/*.apk --clobber
           if [ -f network-report.txt ]; then gh release upload latest network-report.txt --clobber; fi
