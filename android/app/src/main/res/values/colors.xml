@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="echo_background">#1A1838</color>
+    <color name="echo_background_luce">#111111</color>
+    <color name="echo_background_glass">#0E0E11</color>
     <color name="echo_accent">#F2C14E</color>
 </resources>

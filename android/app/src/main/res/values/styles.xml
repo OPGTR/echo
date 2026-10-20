@@ -22,4 +22,22 @@
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
+
+    <!-- The start screen follows the theme you chose (Android 13+ remembers it). -->
+    <style name="AppTheme.NoActionBar.Luce">
+        <item name="android:windowBackground">@color/echo_background_luce</item>
+    </style>
+    <style name="AppTheme.NoActionBar.Glass">
+        <item name="android:windowBackground">@color/echo_background_glass</item>
+    </style>
+    <style name="SplashLuce" parent="AppTheme.NoActionBarLaunch">
+        <item name="windowSplashScreenBackground">@color/echo_background_luce</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_rings_luce</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar.Luce</item>
+    </style>
+    <style name="SplashGlass" parent="AppTheme.NoActionBarLaunch">
+        <item name="windowSplashScreenBackground">@color/echo_background_glass</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_rings_glass</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar.Glass</item>
+    </style>
 </resources>

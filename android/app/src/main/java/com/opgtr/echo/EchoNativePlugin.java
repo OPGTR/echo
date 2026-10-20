@@ -336,6 +336,26 @@ public class EchoNativePlugin extends Plugin {
         call.resolve();
     }
 
+    /**
+     * The start screen in the theme you chose: Android 13+ remembers it for
+     * the next launch; the window behind the app takes its color at once.
+     */
+    @PluginMethod
+    public void setSplashTheme(PluginCall call) {
+        String name = call.getString("name", "indigo");
+        getContext().getSharedPreferences("echo", android.content.Context.MODE_PRIVATE).edit().putString("theme", name).apply();
+        getActivity().runOnUiThread(() -> {
+            try {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    int style = "luce".equals(name) ? R.style.SplashLuce : "glass".equals(name) ? R.style.SplashGlass : R.style.AppTheme_NoActionBarLaunch;
+                    getActivity().getSplashScreen().setSplashScreenTheme(style);
+                }
+                MainActivity.paintWindow(getActivity(), name);
+            } catch (Exception ignored) {}
+            call.resolve();
+        });
+    }
+
     /** Puts a shortcut with your own picture on the home screen (it opens Écho). */
     @PluginMethod
     public void pinShortcut(PluginCall call) {
