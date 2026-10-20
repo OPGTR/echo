@@ -148,7 +148,7 @@ public class EchoPlayerPlugin extends Plugin {
         List<PlaybackService.Item> list = new ArrayList<>();
         try {
             JSArray arr = call.getArray("items");
-            if (arr != null) for (int k = 0; k < arr.length() && k < 30; k++) {
+            if (arr != null) for (int k = 0; k < arr.length() && k < 300; k++) {
                 PlaybackService.Item it = item(arr.getJSONObject(k));
                 if (it != null) list.add(it);
             }

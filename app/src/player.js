@@ -225,23 +225,43 @@ async function itemFor(song, { remote = false } = {}) {
 }
 
 /**
- * The songs after this one, handed to the phone's player (up to 8): they
- * follow each other without the app, songs to download included (each is
- * fetched when its turn comes near). A song picked from a search stays alone.
+ * The rest of the queue, handed to the phone's player (up to 300 songs): they
+ * follow each other without the app, songs to download included (each one
+ * is fetched when its turn comes near). The phone stops the app while the
+ * screen is locked, so the player must have the whole list from the start.
+ * A song picked from a search stays alone.
  */
 async function queueNextInEngine() {
   const s = get()
   if (s.index < 0 || s.repeat === 'one') { engine.setUpcoming([]); return }
   const after = s.queue.slice(s.index + 1)
-  const ahead = (s.repeat === 'all' ? [...after, ...s.queue.slice(0, s.index + 1)] : after).slice(0, 8)
+  const ahead = (s.repeat === 'all' ? [...after, ...s.queue.slice(0, s.index + 1)] : after).slice(0, 300)
   const remote = s.context !== 'search' && !!useApp.getState().source?.installed
   const items = []
-  for (const song of ahead) {
-    const item = await itemFor(song, { remote })
+  for (const [i, song] of ahead.entries()) {
+    // The next one in full (its format, for a gapless start); the others light.
+    const item = i === 0 ? await itemFor(song, { remote }) : lightItem(song, { remote })
     if (!item) break // the order matters: stop at a song that can't be got
     items.push(item)
   }
   engine.setUpcoming(items)
+}
+
+/** A song for the queue without asking the library for its details. */
+function lightItem(song, { remote = false } = {}) {
+  const base = get().cast.base
+  if (song?.local_id) {
+    const tr = get().details[song.local_id]
+    return {
+      id: song.local_id, url: streamUrl(song.local_id), castUrl: base ? `${base}/stream/${encodeURIComponent(song.local_id)}` : null,
+      mime: tr || base ? mimeOf(tr) : null, title: song.title || '', artist: song.artist || '', album: song.album || '',
+      artwork: coverOf(song), castArtwork: song.cover || null, duration: song.duration || 0,
+    }
+  }
+  if (remote && song?.deezer_id && !base) {
+    return { id: engineId(song), url: playUrl(song), castUrl: null, mime: null, title: song.title || '', artist: song.artist || '', album: song.album || '', artwork: coverOf(song), castArtwork: song.cover || null, duration: song.duration || 0 }
+  }
+  return null
 }
 
 /** The songs coming next that are on the phone: what a car screen lists. */
