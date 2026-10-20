@@ -1,7 +1,7 @@
 // Playlists: yours, imported ones and the mixes you keep; a playlist's page
 // (sort, custom order by dragging), importing a link, and "Ton mix".
 import React, { useEffect, useRef, useState } from 'react'
-import { Plus, Download, ArrowDownUp, ChevronDown, GripVertical, Loader2, Link as LinkIcon, Check, X, Search as SearchIcon, Pencil, Trash2, Heart, Shuffle } from 'lucide-react'
+import { Plus, Download, ArrowDownUp, ChevronDown, GripVertical, Loader2, Link as LinkIcon, Check, X, Search as SearchIcon, Pencil, Trash2, Heart, Shuffle, ListMusic, Image as ImageIcon, Smartphone } from 'lucide-react'
 import { api, artUrl } from '../api'
 import { useApp } from '../store'
 import { playList } from '../player'
@@ -16,11 +16,13 @@ const coverSrc = c => (String(c).startsWith('local:') ? artUrl(c.slice(6)) : c)
 const SOURCE = { spotify: 'Spotify', ytmusic: 'YouTube Music', deezer: 'Deezer' }
 
 export function Mosaic({ pl, size = 60 }) {
-  if (pl.kind === 'mix') return <div className="mosaic" style={{ width: size, height: size }}><Rings seed={pl.id} center={pl.covers?.[0] ? coverSrc(pl.covers[0]) : null} /></div>
+  // Always a square of `size`, whatever is (or isn't) in it.
+  const box = { width: size, height: size, minWidth: size, maxWidth: size, minHeight: size, maxHeight: size }
+  if (pl.kind === 'mix' && !pl.custom_cover) return <div className="mosaic" style={box}><Rings seed={pl.id} center={pl.covers?.[0] ? coverSrc(pl.covers[0]) : null} /></div>
   const covers = pl.covers || []
-  if (!covers.length) return <div className="mosaic empty" style={{ width: size, height: size }} />
-  if (covers.length < 4) return <img className="mosaic" src={coverSrc(covers[0])} alt="" style={{ width: size, height: size }} />
-  return <div className="mosaic grid" style={{ width: size, height: size }}>{covers.slice(0, 4).map(c => <img key={c} src={coverSrc(c)} alt="" loading="lazy" />)}</div>
+  if (!covers.length || (covers.length < 4 && !covers[0])) return <div className="mosaic empty" style={box}><ListMusic size={Math.round(size / 3)} /></div>
+  if (covers.length < 4 && covers[0]) return <img className="mosaic" src={coverSrc(covers[0])} alt="" style={box} />
+  return <div className="mosaic grid" style={box}>{covers.slice(0, 4).map((c, i) => (c ? <img key={`${c}-${i}`} src={coverSrc(c)} alt="" loading="lazy" /> : <span key={i} className="cell empty" />))}</div>
 }
 
 const sortLabel = { custom: 'Ordre perso', title: 'Titre', artist: 'Artiste', added: 'Date d’ajout', played: 'Les plus écoutés', duration: 'Durée' }
@@ -101,6 +103,7 @@ export function PlaylistScreen({ id }) {
     items: [
       { label: t('Renommer'), icon: Pencil, onSelect: async () => { const name = await askPlaylistName(pl.name, { title: t('Renommer la playlist'), confirm: t('Renommer') }); if (name) setPl(await api.updatePlaylist(pl.id, { name })) } },
       { label: t('Tout télécharger'), icon: Download, onSelect: () => downloadSongs(songs) },
+      { label: t('Changer l’image'), icon: ImageIcon, onSelect: () => (songs.length >= 4 ? useApp.getState().open({ type: 'cover', id: pl.id }) : useApp.getState().toast(t('Il faut au moins 4 titres pour composer l’image.'))) },
       { label: t('Supprimer la playlist'), icon: Trash2, danger: true, onSelect: async () => { if (await useApp.getState().ask({ kind: 'confirm', title: t('Supprimer « {name} » ?', { name: pl.name }), hint: t('Les titres restent sur ton téléphone.'), confirm: t('Supprimer'), danger: true })) { await api.deletePlaylist(pl.id); useApp.getState().libraryChanged(); back() } } },
     ],
   })
@@ -149,7 +152,10 @@ export function PlaylistScreen({ id }) {
     <div className="page">
       <Back><button type="button" className="icon-btn" onClick={more} aria-label={t('Plus')}><span style={{ fontSize: 22, lineHeight: 0, color: 'var(--text)' }}>⋯</span></button></Back>
       <div className="pl-hero">
-        <Mosaic pl={pl} size={120} />
+        <button type="button" className="pl-cover" onClick={() => songs.length >= 4 ? useApp.getState().open({ type: 'cover', id: pl.id }) : useApp.getState().toast(t('Il faut au moins 4 titres pour composer l’image.'))} aria-label={t('Changer l’image de la playlist')}>
+          <Mosaic pl={pl} size={120} />
+          <span className="pl-cover-btn"><ImageIcon size={17} /></span>
+        </button>
         <div style={{ minWidth: 0 }}>
           <h1>{pl.name}</h1>
           <p>{[plural(pl.count, '1 titre', '{n} titres'), pl.duration ? fmtLength(pl.duration) : null, pl.source ? t('Importée de {s}', { s: SOURCE[pl.source] || pl.source }) : null].filter(Boolean).join(' · ')}</p>
@@ -166,7 +172,7 @@ export function PlaylistScreen({ id }) {
         {songs.map((song, i) => (
           <div key={song.item_id} className={`pl-item ${drag?.from === i ? 'dragging' : ''}`} style={{ transform: `translateY(${shift(i)}px)`, transition: drag && drag.from !== i ? 'transform .15s' : 'none' }}>
             {custom && <button type="button" className="grip" onPointerDown={e => startDrag(e, i)} aria-label={t('Déplacer « {title} »', { title: song.title })}><GripVertical size={20} /></button>}
-            <TrackRow song={song} onPlay={() => playList(songs, i, { context: 'playlist' })} menu={s => songMenu(s, { playlistId: pl.id, onChanged: load })} />
+            <TrackRow song={song} group={songs} playlistId={pl.id} onPlay={() => playList(songs, i, { context: 'playlist' })} menu={s => songMenu(s, { playlistId: pl.id, onChanged: load })} />
           </div>
         ))}
       </div>
@@ -201,36 +207,105 @@ export function LikedScreen() {
 // ------------------------------------------------------- adding songs
 export function AddSongs({ id }) {
   const [q, setQ] = useState('')
+  const [tab, setTab] = useState('local') // local: on the phone · catalogue: to download
   const [res, setRes] = useState(null)
+  const [mine, setMine] = useState(null)
+  const [pl, setPl] = useState(null)
   const [added, setAdded] = useState({})
+  const [total, setTotal] = useState(0)
+  useEffect(() => { api.playlist(id).then(setPl).catch(() => {}) }, [id])
+  // On the phone: the songs you play most first, or the ones matching.
   useEffect(() => {
     const text = q.trim()
-    if (text.length < 2) { setRes(null); return undefined }
-    const timer = setTimeout(async () => { try { setRes(await api.search(text)) } catch { setRes({ library: [], catalogue: { tracks: [] } }) } }, 300)
+    const timer = setTimeout(async () => {
+      try { setMine((await api.tracks({ sort: text ? 'title' : 'played', q: text, limit: 300 })).map(r => ({ ...r, local_id: r.id }))) } catch { setMine([]) }
+    }, text ? 200 : 0)
     return () => clearTimeout(timer)
   }, [q])
-  const songs = res ? [...(res.library || []).map(r => ({ ...r, local_id: r.id })), ...(res.catalogue?.tracks || [])] : []
-  const add = async song => {
-    const key = song.local_id || song.deezer_id
-    setAdded({ ...added, [key]: true })
-    await api.addToPlaylist(id, [song]).catch(() => {})
+  useEffect(() => { api.stats().then(st => setTotal(st.tracks || st.total || 0)).catch(() => {}) }, [])
+  // To download: the catalogue.
+  useEffect(() => {
+    const text = q.trim()
+    if (tab !== 'catalogue' || text.length < 2) { setRes(null); return undefined }
+    const timer = setTimeout(async () => { try { setRes(await api.search(text)) } catch { setRes({ catalogue: { tracks: [] } }) } }, 300)
+    return () => clearTimeout(timer)
+  }, [q, tab])
+  const inList = new Set((pl?.tracks || []).map(s => s.local_id || s.deezer_id))
+  const songs = tab === 'local' ? (mine || []) : (res?.catalogue?.tracks || []).filter(s => !s.local_id)
+  const picked = Object.keys(added).filter(k => added[k])
+  const toggle = song => { const key = song.local_id || song.deezer_id; setAdded({ ...added, [key]: added[key] ? null : song }) }
+  const save = async () => {
+    const list = Object.values(added).filter(Boolean)
+    if (!list.length) return
+    await api.addToPlaylist(id, list).catch(e => useApp.getState().toast(e.message))
     useApp.getState().libraryChanged()
+    useApp.getState().toast(list.length === 1 ? t('1 titre ajouté à « {name} ».', { name: pl?.name || '' }) : t('{n} titres ajoutés à « {name} ».', { n: list.length, name: pl?.name || '' }))
+    useApp.getState().back()
   }
   return (
-    <div className="page">
+    <div className="page with-footer">
       <Back />
-      <div className="page-head" style={{ paddingTop: 0 }}><h1>{t('Ajouter des titres')}</h1></div>
-      <label className="field"><SearchIcon size={20} /><input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={t('Titres, artistes, albums')} aria-label={t('Rechercher')} /></label>
-      <div className="tracks" style={{ marginTop: 10 }}>
+      <div className="page-head" style={{ paddingTop: 0 }}><h1>{pl ? t('Ajouter à « {name} »', { name: pl.name }) : t('Ajouter des titres')}</h1></div>
+      <label className="field"><SearchIcon size={20} /><input value={q} onChange={e => setQ(e.target.value)} placeholder={t('Rechercher un titre')} aria-label={t('Rechercher')} /></label>
+      <div className="tabs2" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === 'local'} onClick={() => setTab('local')}><Smartphone size={17} />{t('Disponibles')}{total > 0 && <span className="count">{total}</span>}</button>
+        <button type="button" role="tab" aria-selected={tab === 'catalogue'} onClick={() => setTab('catalogue')}><Download size={17} />{t('À télécharger')}</button>
+      </div>
+      <p className="note" style={{ margin: '12px 0 2px', fontSize: 13.5 }}>{tab === 'local' ? t('Se lisent tout de suite, même hors ligne. Les plus écoutés d’abord.') : t('Cherche un titre : il se téléchargera quand tu l’écouteras.')}</p>
+      <div className="tracks" style={{ marginTop: 4 }}>
+        {tab === 'local' && !mine && <div className="empty"><Loader2 className="spin" /></div>}
+        {tab === 'catalogue' && q.trim().length < 2 && <div className="empty">{t('Tape au moins 2 lettres.')}</div>}
         {songs.map(song => {
           const key = song.local_id || song.deezer_id
+          const already = inList.has(key)
           return (
             <div className="row" key={key}>
-              <div className="track" style={{ pointerEvents: 'none' }}><Cover song={song} /><span className="text"><span className="title" style={{ display: 'block' }}>{song.title}</span><span className="sub" style={{ display: 'block' }}>{song.artist}</span></span></div>
-              <button type="button" className="icon-btn" onClick={() => add(song)} disabled={added[key]} aria-label={t('Ajouter')}>{added[key] ? <Check size={22} color="var(--sodium)" /> : <Plus size={22} />}</button>
+              <div className="track" style={{ pointerEvents: 'none' }}><Cover song={song} /><span className="text"><span className="title" style={{ display: 'block' }}>{song.title}</span><span className="sub" style={{ display: 'block' }}>{already ? t('Déjà dans la playlist') : song.artist}</span></span></div>
+              <button type="button" className={`add-dot ${added[key] ? 'on' : ''}`} onClick={() => toggle(song)} disabled={already} aria-pressed={!!added[key]} aria-label={t('Ajouter')}>{added[key] ? <Check size={18} strokeWidth={2.6} /> : <Plus size={18} strokeWidth={2.4} />}</button>
             </div>
           )
         })}
+      </div>
+      <div className="page-footer"><button type="button" className="btn primary wide" disabled={!picked.length} onClick={save}>{picked.length ? plural(picked.length, 'Ajouter 1 titre', 'Ajouter {n} titres') : t('Choisis des titres')}</button></div>
+    </div>
+  )
+}
+
+// ------------------------------------------------------ playlist picture
+/** The playlist's picture: 4 of its songs, in the order you touch them. */
+export function CoverPicker({ id }) {
+  const [pl, setPl] = useState(null)
+  const [order, setOrder] = useState([])
+  useEffect(() => { api.playlist(id).then(p => { setPl(p); setOrder((p.meta?.cover_items || []).slice(0, 4)) }).catch(() => {}) }, [id])
+  if (!pl) return <div className="page"><Back /><div className="empty"><Loader2 className="spin" /></div></div>
+  const songs = (pl.tracks || []).filter(s => s.cover || s.local_id)
+  const touch = item => setOrder(order.includes(item) ? order.filter(x => x !== item) : order.length >= 4 ? [...order.slice(1), item] : [...order, item])
+  const preview = order.map(x => songs.find(s => s.item_id === x)).filter(Boolean)
+  const save = async items => { await api.updatePlaylist(id, { cover_items: items }); useApp.getState().libraryChanged(); useApp.getState().back() }
+  return (
+    <div className="page with-footer">
+      <Back />
+      <div className="page-head" style={{ paddingTop: 0 }}><h1>{t('Image de la playlist')}</h1></div>
+      <div className="cover-head">
+        <div className="mosaic grid" style={{ width: 104, height: 104, minWidth: 104 }}>
+          {[0, 1, 2, 3].map(i => preview[i] ? <Cover key={i} song={preview[i]} className="cell" /> : <span key={i} className="cell empty" />)}
+        </div>
+        <p className="note" style={{ margin: 0 }}>{t('Choisis 4 titres de la playlist. Ils forment l’image, dans l’ordre où tu les touches.')}</p>
+      </div>
+      <div className="cover-grid">
+        {songs.map(song => {
+          const n = order.indexOf(song.item_id) + 1
+          return (
+            <button key={song.item_id} type="button" className={`cover-pick ${n ? 'on' : ''}`} aria-pressed={!!n} onClick={() => touch(song.item_id)}>
+              <Cover song={song} className="art" />{n > 0 && <span className="n">{n}</span>}
+              <span className="name">{song.title}</span>
+            </button>
+          )
+        })}
+      </div>
+      <div className="page-footer two-btns">
+        <button type="button" className="btn quiet" onClick={() => save([])}>{t('Par défaut')}</button>
+        <button type="button" className="btn primary" disabled={order.length !== 4} onClick={() => save(order)}>{order.length === 4 ? t('Enregistrer') : t('{n} sur 4', { n: order.length })}</button>
       </div>
     </div>
   )

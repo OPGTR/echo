@@ -5,10 +5,15 @@
 // (Chromium, so Android's WebView); elsewhere the panes are just frosted.
 
 const PANES = [
-  '.mini', '.tabbar', '.player-bottom', '.sheet', '.card-surface', '.set-card', '.q-opt', '.device-pill', '.sq-btn',
+  '.player-bottom', '.sheet', '.card-surface', '.set-card', '.q-opt', '.device-pill', '.sq-btn',
   '.chip', '.segments button', '.btn.quiet', '.field', '.mix-card .art', '.start-grid button', '.svc-row button', '.dir-row button',
 ].join(', ')
 const FILTER = 'blur(5px) saturate(1.8) brightness(1.08)'
+// Menus frost more, so what they say stays easy to read. The music bubble
+// and the tab bar are frosted glass without a lens (styles.css): a lens
+// on them doesn't line up with what scrolls under them.
+const FROSTED = '.sheet'
+const FILTER_FROSTED = 'blur(12px) saturate(1.6) brightness(.92)'
 
 let on = false
 let defs = null
@@ -95,7 +100,7 @@ function fit(el) {
   const w = Math.round(el.offsetWidth), h = Math.round(el.offsetHeight)
   if (w < 8 || h < 8 || w * h > 700 * 1200) return
   const r = Math.min(Math.round(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0), Math.floor(Math.min(w, h) / 2))
-  const value = `url(#${filterFor(w, h, r)}) ${FILTER}`
+  const value = `url(#${filterFor(w, h, r)}) ${el.matches(FROSTED) ? FILTER_FROSTED : FILTER}`
   if (el.style.backdropFilter !== value) { el.style.backdropFilter = value; el.style.webkitBackdropFilter = value }
 }
 

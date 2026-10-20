@@ -46,6 +46,23 @@ function Row({ label, value, onClick, accent = false }) {
 }
 
 // ---------------------------------------------------------------- the list
+/** Écho's version and what it is made with. */
+async function showAbout() {
+  const info = await appInfo().catch(() => ({}))
+  useApp.getState().showSheet({
+    title: `Écho ${version}`,
+    subtitle: [info.build ? t('Build {b}', { b: info.build }) : null, info.abi || null].filter(Boolean).join(' · '),
+    items: [],
+    footer: (
+      <div className="about">
+        <div className="between"><span className="muted">{t('Moteur de téléchargement')}</span><span>{t('adapté de Lokal (MIT)')}</span></div>
+        <div className="between"><span className="muted">{t('Paroles')}</span><span>LRCLIB</span></div>
+        <div className="between"><span className="muted">{t('Code et notes de version')}</span><a href="https://github.com/OPGTR/echo/releases" target="_blank" rel="noreferrer" style={{ color: 'var(--sodium)', fontWeight: 650 }}>GitHub</a></div>
+      </div>
+    ),
+  })
+}
+
 export function SettingsHome() {
   const open = useApp(s => s.open)
   const prefs = useApp(s => s.prefs)
@@ -93,8 +110,8 @@ export function SettingsHome() {
       <div className="grp">Écho</div>
       <div className="set-card">
         <Row label={t('Mises à jour')} value={update?.available ? t('{v} disponible', { v: update.version }) : t('À jour')} accent={!!update?.available} onClick={() => open({ type: 'update' })} />
+        <Row label={t('À propos')} value={version} onClick={showAbout} />
       </div>
-      <p className="note" style={{ margin: '18px 4px 0' }}>{t('Écho {v}. Moteur de téléchargement adapté de Lokal (MIT). Paroles : LRCLIB.', { v: version })}</p>
     </div>
   )
 }
@@ -534,7 +551,7 @@ export function StartScreen() {
       <h2 className="sub-h">{t('Dans « Pour toi »')}</h2>
       <p className="note" style={{ marginTop: -6 }}>{t('Choisis les catégories à afficher.')}</p>
       <div className="set-card">
-        {[['daily', 'Mixes du jour'], ['custom', 'Ton mix'], ['rediscover', 'À redécouvrir'], ['discover', 'Découvertes'], ['resume', 'Reprendre'], ['added', 'Ajoutés récemment'], ['chart', 'Populaire en ce moment']].map(([key, label]) => (
+        {[['follows', 'Du nouveau chez tes artistes'], ['daily', 'Mixes du jour'], ['discover', 'Découvertes'], ['rediscover', 'À redécouvrir'], ['custom', 'Ton mix'], ['chart', 'Populaire en ce moment']].map(([key, label]) => (
           <div key={key} className="toggle-line">
             <span>{t(label)}</span>
             <button type="button" role="switch" aria-checked={sections[key]} aria-label={t(label)} className={`switch ${sections[key] ? 'on' : ''}`} onClick={() => toggleSection(key)}><i /></button>
@@ -569,28 +586,41 @@ export function UpdateScreen() {
     const r = await installApk(job.file)
     if (r?.needsPermission) useApp.getState().toast(t('Autorise Écho à installer des applis, puis touche Installer à nouveau.'))
   }
-  const notes = String(update?.notes || '').split('\n').map(l => l.replace(/^[-*•]\s*/, '').trim()).filter(l => l && !/^Quel fichier/.test(l)).slice(0, 8)
+  // The notes as sections ("Améliorations", "Corrections"…), from the server.
+  const sections = (update?.changes || []).filter(x => x.items?.length && !/github/i.test(x.title || ''))
+  const size = update?.available && update.assets ? Math.round((Object.values(update.assets)[0]?.size || 0) / 1e6) : 0
   return (
-    <div className="page">
+    <div className="page update-page">
       <Back />
       <div className="update-head">
         <img src="icon.png" alt="" />
         <div>
           <h1>{update?.available ? t('Écho {v} est prête', { v: update.version }) : t('Écho est à jour')}</h1>
-          <p className="muted">{t('Tu as la {v}', { v: version })}{appBuild ? ` (${appBuild})` : ''}{update?.available && update.assets ? ` · ${Math.round((Object.values(update.assets)[0]?.size || 0) / 1e6)} Mo` : ''}</p>
+          <p className="muted">{t('Tu as la {v}', { v: version })}{size ? ` · ${size} Mo` : ''}</p>
         </div>
       </div>
-      {update?.available && notes.length > 0 && <ul className="notes">{notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
-      {job?.state === 'downloading' && <>
-        <div className="between muted" style={{ marginTop: 18, fontSize: 13.5 }}><span>{t('Téléchargement…')}</span><span>{job.progress} %</span></div>
-        <div className="bar-track"><i style={{ width: `${job.progress}%` }} /></div>
-      </>}
-      {job?.state === 'error' && <p className="note err">{job.error}</p>}
-      {update?.available && <p className="note" style={{ marginTop: 12 }}>{t('Android te demandera de confirmer l’installation. Ta bibliothèque et tes playlists sont gardées.')}</p>}
-      <div className="btn-row">
-        {update?.available && job?.state !== 'ready' && <button type="button" className="btn primary wide" disabled={job?.state === 'downloading'} onClick={start}><ArrowUpCircle size={18} />{t('Télécharger la mise à jour')}</button>}
-        {job?.state === 'ready' && <button type="button" className="btn primary wide" onClick={install}>{t('Installer')}</button>}
-        <button type="button" className="btn quiet wide" disabled={checking} onClick={check}>{checking ? <Loader2 size={18} className="spin" /> : <RotateCcw size={18} />}{t('Vérifier maintenant')}</button>
+      {update?.available && sections.length > 0 && (
+        <div className="changes">
+          {sections.map((sec, i) => (
+            <section key={i}>
+              {sec.title && <h2 className="changes-h">{sec.title}</h2>}
+              <ul className="notes">{sec.items.slice(0, 20).map((n, k) => <li key={k}>{n}</li>)}</ul>
+            </section>
+          ))}
+        </div>
+      )}
+      <div className="update-actions">
+        {job?.state === 'downloading' && <>
+          <div className="between muted" style={{ fontSize: 13.5 }}><span>{t('Téléchargement…')}</span><span>{job.progress} %</span></div>
+          <div className="bar-track"><i style={{ width: `${job.progress}%` }} /></div>
+        </>}
+        {job?.state === 'error' && <p className="note err">{job.error}</p>}
+        {update?.available && <p className="note" style={{ marginTop: 10 }}>{t('Android te demandera de confirmer l’installation. Ta bibliothèque et tes playlists sont gardées.')}</p>}
+        <div className="btn-row" style={{ marginTop: 12 }}>
+          {update?.available && job?.state !== 'ready' && <button type="button" className="btn primary wide" disabled={job?.state === 'downloading'} onClick={start}><ArrowUpCircle size={18} />{t('Télécharger la mise à jour')}</button>}
+          {job?.state === 'ready' && <button type="button" className="btn primary wide" onClick={install}>{t('Installer')}</button>}
+          <button type="button" className="btn quiet wide" disabled={checking} onClick={check}>{checking ? <Loader2 size={18} className="spin" /> : <RotateCcw size={18} />}{t('Vérifier maintenant')}</button>
+        </div>
       </div>
     </div>
   )

@@ -115,16 +115,20 @@ onEngine(e => {
 })
 
 // ---------------------------------------------------------------- downloads
-/** Waits for the download of `deezerId`; resolves with the library id. */
+/**
+ * Waits for the download of `deezerId`; resolves with the library id. The
+ * server answers when it's done (no timers: they nearly stop when the phone
+ * is locked, the music must go on).
+ */
 async function waitForDownload(deezerId, isCurrent) {
   const started = Date.now()
   while (Date.now() - started < 20 * 60 * 1000) {
     if (!isCurrent()) return null
-    const list = await useApp.getState().refreshDownloads()
-    const job = list.find(d => d.deezer_id === String(deezerId) && ['queued', 'downloading', 'saving', 'done', 'error', 'cancelled'].includes(d.status))
-    if (job?.status === 'done' && job.track_id) return job.track_id
+    const job = await api.waitDownload(deezerId, 45000).catch(() => null)
+    if (!isCurrent()) return null
+    if (job?.status === 'done' && job.track_id) { useApp.getState().refreshDownloads(); return job.track_id }
     if (job && ['error', 'cancelled'].includes(job.status)) throw Object.assign(new Error(job.error || 'cancelled'), { job })
-    await new Promise(r => setTimeout(r, 700))
+    if (!job) await new Promise(r => setTimeout(r, 1500))
   }
   throw new Error('timeout')
 }
@@ -135,7 +139,7 @@ async function ensureLocal(song, isCurrent) {
   if (!song.deezer_id) throw new Error('no source')
   const source = useApp.getState().source || await useApp.getState().refreshSource()
   if (!source?.installed) throw Object.assign(new Error('NO_SOURCE'), { code: 'NO_SOURCE' })
-  const [job] = await api.download([song])
+  const [job] = await api.download([song], { play: true })
   pokeDownloads()
   if (job?.track_id) return job.track_id
   return waitForDownload(song.deezer_id, isCurrent)
@@ -160,7 +164,7 @@ function prefetch() {
   if (prefetching === key) return
   prefetching = key
   const stillNext = () => { const s = get(); const n = s.queue[s.index + 1] || (s.repeat === 'all' ? s.queue[0] : null); return n && keyOf(n) === key }
-  api.download([following]).then(async ([job]) => {
+  api.download([following], { play: true }).then(async ([job]) => {
     pokeDownloads()
     const localId = job?.track_id || await waitForDownload(following.deezer_id, stillNext)
     if (localId) { markLocal(key, localId); queueNextInEngine(); shareLibrary() }

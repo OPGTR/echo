@@ -8,6 +8,7 @@ import { TrackList } from '../components/Track'
 import { HeadActions } from '../components/Chrome'
 import Back from '../components/Back'
 import { t, plural } from '../i18n'
+import { ArtistMixCard } from './Home'
 
 const asSongs = rows => rows.map(r => ({ ...r, local_id: r.id }))
 let remembered = { view: 'songs', sort: 'added', filter: '' }
@@ -28,7 +29,7 @@ function useProgressive(items, step = 120) {
 }
 
 export default function Library() {
-  const [view, setView] = useState(remembered.view)
+  const [view, setView] = useState(remembered.view === 'follows' ? 'songs' : remembered.view)
   const [sort, setSort] = useState(remembered.sort)
   const [filter, setFilter] = useState(remembered.filter)
   const [loaded, setLoaded] = useState({ key: '', rows: null })
@@ -56,16 +57,14 @@ export default function Library() {
   const [visibleSongs, songsMore] = useProgressive(songs)
   const [visibleRows, rowsMore] = useProgressive(view === 'albums' || view === 'artists' ? (rows || []) : [], 60)
 
-  const views = [['songs', 'Titres'], ['albums', 'Albums'], ['artists', 'Artistes'], ['follows', 'Suivis'], ['liked', 'J’aime']]
-  const unseen = useApp(s => s.follows.unseen)
+  const views = [['songs', 'Titres'], ['albums', 'Albums'], ['artists', 'Artistes'], ['liked', 'J’aime']]
   return (
     <div className="page">
       <div className="page-head"><h1>{t('Bibliothèque')}</h1><HeadActions /></div>
       <div className="segments" role="group" aria-label={t('Bibliothèque')}>
-        {views.map(([id, label]) => <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)}>{t(label)}{id === 'follows' && unseen > 0 && <i className="seg-dot" />}</button>)}
+        {views.map(([id, label]) => <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)}>{t(label)}</button>)}
       </div>
-      {view === 'follows' && <Follows />}
-      {view !== 'follows' && <>
+      {<>
       <div style={{ display: 'flex', gap: 10, marginTop: 14, alignItems: 'center' }}>
         <label className="field" style={{ flex: 1, minWidth: 0, height: 44 }}>
           <SearchIcon size={18} />
@@ -94,7 +93,7 @@ export default function Library() {
       {(view === 'songs' || view === 'liked') && rows?.length > 0 && (
         <section style={{ marginTop: 10 }}>
           <p className="note" style={{ margin: '6px 0' }}>{plural(songs.length, '1 titre', '{n} titres')}</p>
-          <TrackList songs={visibleSongs} onPlayAt={i => playList(songs, i)} />
+          <TrackList songs={visibleSongs} all={songs} onPlayAt={i => playList(songs, i)} />
           {songsMore}
         </section>
       )}
@@ -127,6 +126,16 @@ export default function Library() {
 }
 
 /** Artists you follow; a dot on those who released something new. */
+export function FollowsScreen() {
+  return (
+    <div className="page">
+      <Back />
+      <div className="page-head" style={{ paddingTop: 0 }}><h1>{t('Suivis')}</h1></div>
+      <Follows />
+    </div>
+  )
+}
+
 function Follows() {
   const follows = useApp(s => s.follows)
   const refresh = useApp(s => s.refreshFollows)
@@ -208,6 +217,7 @@ export function LocalArtist({ name }) {
           {remote && <button type="button" className="btn quiet" onClick={() => open({ type: 'catalogue-artist', id: remote.id })}>{t('Dans le catalogue')}</button>}
         </div>
       </div>
+      {remote && <ArtistMixCard id={remote.id} name={remote.name || name} picture={remote.picture} />}
       <section className="section"><h2>{t('Sur ton téléphone')}</h2><TrackList songs={songs} /></section>
     </div>
   )

@@ -113,6 +113,9 @@ export async function dynamicColors() {
   if (!isNative) return { available: false }
   try { return await EchoNative.dynamicColors() } catch { return { available: false } }
 }
+/** The start screen's colors for next time (Android). */
+export function setSplashTheme(name) { if (isNative) EchoNative.setSplashTheme({ name }).catch(() => {}) }
+
 export async function setLauncherIcon(name) { if (isNative) await EchoNative.setIcon({ name }).catch(() => {}) }
 export async function pinShortcut(image, label = 'Écho') {
   if (!isNative) return { requested: false }

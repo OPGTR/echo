@@ -8,6 +8,7 @@ import { playList } from '../player'
 import { TrackList, downloadSongs } from '../components/Track'
 import { HeadActions } from '../components/Chrome'
 import Back from '../components/Back'
+import { ArtistMixCard } from './Home'
 import { t } from '../i18n'
 
 let lastQuery = ''
@@ -146,11 +147,12 @@ export function CatalogueArtist({ id }) {
               const f = artist.followed ? await api.unfollow(artist.id) : await api.follow({ id: artist.id, name: artist.name, picture: artist.picture })
               useApp.setState({ follows: f })
               setArtist({ ...artist, followed: !artist.followed })
-              app.toast(artist.followed ? t('Tu ne suis plus {name}.', { name: artist.name }) : t('Tu suis {name} : ses nouveautés apparaîtront dans Bibliothèque › Suivis.', { name: artist.name }))
+              app.toast(artist.followed ? t('Tu ne suis plus {name}.', { name: artist.name }) : t('Tu suis {name} : ses nouveautés apparaîtront dans Pour toi.', { name: artist.name }))
             } catch (e) { app.toast(e.message) }
           }}>{artist.followed ? <><UserCheck size={18} />{t('Suivi')}</> : <><UserPlus size={18} />{t('Suivre')}</>}</button>
         </div>
       </div>
+      <ArtistMixCard id={artist.id} name={artist.name} picture={artist.picture} />
       {artist.top.length > 0 && <section className="section"><h2>{t('Titres populaires')}</h2><TrackList songs={artist.top.slice(0, 10)} /></section>}
       {artist.albums.length > 0 && (
         <section className="section">

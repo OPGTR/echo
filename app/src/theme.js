@@ -1,7 +1,7 @@
 // Themes: Nuit indigo (Écho's own), Liquid glass, Luce, Material You (the
 // phone's wallpaper colors) and a fixed color of your choice. Each sets the
 // color tokens; glass and Luce also change surfaces (styles.css).
-import { dynamicColors } from './native'
+import { dynamicColors, setSplashTheme } from './native'
 import { liquidGlass } from './glass'
 
 const root = () => document.documentElement
@@ -21,9 +21,11 @@ const VARS = ['--night', '--deep', '--surface', '--line', '--text', '--muted', '
 export async function applyTheme(prefs = {}) {
   const el = root()
   const theme = prefs.theme || 'indigo'
+  try { localStorage.setItem('echo-theme', JSON.stringify({ theme, accent: prefs.accent || null })) } catch {}
   VARS.forEach(v => el.style.removeProperty(v))
   el.dataset.theme = theme === 'material' || theme === 'fixed' ? 'indigo' : theme
   liquidGlass(theme === 'glass')
+  setSplashTheme(theme === 'luce' || theme === 'glass' ? theme : 'indigo')
   let accent = null
   if (theme === 'fixed') accent = prefs.accent || '#f2c14e'
   if (theme === 'material') {

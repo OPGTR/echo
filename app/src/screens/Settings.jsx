@@ -30,8 +30,10 @@ export function Downloads() {
             <button type="button" className="open" disabled={d.status !== 'done'} onClick={() => playList([song], 0)}>
               <Cover song={song} />
               <span className="text">
-                <span className="title" style={{ display: 'block' }}>{d.title || d.deezer_id}</span>
-                <span className={`sub ${d.status === 'error' ? 'err' : ''}`} style={{ display: 'block' }}>{d.status === 'error' ? `${label(d)} : ${d.error}` : `${d.artist ? d.artist + ', ' : ''}${label(d)}`}</span>
+                <span className="title wrap2">{d.title || d.deezer_id}</span>
+                {d.artist && <span className="sub wrap2">{d.artist}</span>}
+                <span className={`state-line ${d.status === 'error' ? 'err' : active ? 'on' : ''}`}>{d.status === 'error' ? `${label(d)} : ${d.error}` : label(d)}</span>
+                {d.status === 'downloading' && <span className="bar-track thin"><i style={{ width: `${Math.max(3, Math.round(d.progress || 0))}%` }} /></span>}
               </span>
             </button>
             {active ? <StateMark song={song} progress={d.status === 'queued' ? 0 : d.progress} /> : d.status === 'done' ? <Check size={20} color="var(--muted)" /> : null}

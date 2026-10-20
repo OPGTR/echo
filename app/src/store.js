@@ -9,7 +9,7 @@ export const DEFAULT_PREFS = {
   accent: '#f2c14e', // the fixed color
   icon: 'Default',
   startTab: 'home',
-  sections: { daily: true, custom: true, rediscover: true, discover: true, resume: true, added: true, chart: true },
+  sections: { follows: true, daily: true, custom: true, rediscover: true, discover: true, chart: true },
   eq: { enabled: false, preset: 'flat', bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preamp: 0 },
   audioTest: null, // { limit: Hz, at, recommended }
 }
@@ -20,6 +20,7 @@ export const useApp = create((set, get) => ({
   stack: [], // screens opened over the tab: { type, ...params }
   toasts: [],
   sheet: null, // an action sheet: { title, items: [{ label, icon, onSelect, danger }] }
+  selection: null, // several songs picked by a long press: { items: { key: song }, all: [songs], playlistId }
   dialog: null, // an Écho window asking for a name or a color: { kind: 'text' | 'color', ..., resolve }
   downloads: [],
   source: null,
@@ -37,18 +38,27 @@ export const useApp = create((set, get) => ({
   },
   refreshFollows: async (force = false) => { try { const follows = await api.follows(force); set({ follows }); return follows } catch { return get().follows } },
 
-  setTab: tab => set({ tab, stack: [] }),
-  open: screen => set(s => ({ stack: [...s.stack, screen] })),
+  setTab: tab => set({ tab, stack: [], selection: null }),
+  open: screen => set(s => ({ stack: [...s.stack, screen], selection: null })),
   back: () => {
     const s = get()
+    if (s.selection && !s.sheet && !s.dialog) { set({ selection: null }); return true }
     if (s.dialog) { s.closeDialog(null); return true }
     if (s.sheet) { set({ sheet: null }); return true }
-    if (s.stack.length) { set({ stack: s.stack.slice(0, -1) }); return true }
+    if (s.stack.length) { set({ stack: s.stack.slice(0, -1), selection: null }); return true }
     const start = s.prefs.startTab || 'home'
     if (s.tab !== start) { set({ tab: start }); return true }
     return false
   },
   showSheet: sheet => set({ sheet }),
+  select: (song, key, { all = [], playlistId = null } = {}) => set(s => {
+    const cur = s.selection || { items: {}, all, playlistId }
+    const items = { ...cur.items }
+    if (items[key]) delete items[key]; else items[key] = song
+    return { selection: Object.keys(items).length ? { ...cur, all: all.length ? all : cur.all, items } : null }
+  }),
+  selectAll: keyOf => set(s => (s.selection ? { selection: { ...s.selection, items: Object.fromEntries(s.selection.all.map(x => [keyOf(x), x])) } } : {})),
+  clearSelection: () => set({ selection: null }),
   /** Asks in an Écho window; resolves with the answer, or null when cancelled. */
   ask: dialog => new Promise(resolve => { get().dialog?.resolve(null); set({ dialog: { ...dialog, resolve } }) }),
   closeDialog: (value = null) => { const d = get().dialog; set({ dialog: null }); d?.resolve(value) },
@@ -57,7 +67,7 @@ export const useApp = create((set, get) => ({
   toast: (message, action = null) => {
     const id = ++toastSeq
     set(s => ({ toasts: [...s.toasts.slice(-2), { id, message, action }] }))
-    setTimeout(() => set(s => ({ toasts: s.toasts.filter(x => x.id !== id) })), action ? 7000 : 3500)
+    setTimeout(() => set(s => ({ toasts: s.toasts.filter(x => x.id !== id) })), action ? 4000 : 2200)
   },
   dismissToast: id => set(s => ({ toasts: s.toasts.filter(x => x.id !== id) })),
 

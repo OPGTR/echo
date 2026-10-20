@@ -2,12 +2,12 @@
 // rings with the song's progress), the full player with lyrics and casting,
 // the queue, sheets, toasts.
 import React, { useEffect, useRef, useState } from 'react'
-import { Sparkles, Search, Library, ListMusic, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Heart, ChevronDown, Loader2, Download, Settings, X, Mic, Cast, Smartphone, Tv, Speaker, ArrowUpCircle, Check } from 'lucide-react'
+import { Sparkles, Search, Library, ListMusic, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Heart, ChevronDown, Loader2, Download, Settings, X, Mic, Cast, Smartphone, Tv, Speaker, ArrowUpCircle, Check, MoreVertical } from 'lucide-react'
 import { useApp } from '../store'
 import { api } from '../api'
 import { usePlayer, toggle, next, previous, seek, toggleShuffle, cycleRepeat, toggleLike, openFull, coverOf, keyOf, jumpTo, removeFromQueue, codecLabel, castScan, castTo, stopCasting, stopPlayer, restorePlayer } from '../player'
 import { onEngine } from '../engine'
-import { Cover, StateMark, goToArtist } from './Track'
+import { Cover, StateMark, goToArtist, selectionMenu, selKey } from './Track'
 import { t } from '../i18n'
 
 export function TabBar() {
@@ -344,8 +344,15 @@ export function ActionSheet() {
     <div className="scrim" onClick={close}>
       <div className="sheet" onClick={e => e.stopPropagation()} role="dialog" aria-label={sheet.title}>
         <div className="grab" />
-        <h3>{sheet.title}</h3>
-        {sheet.subtitle && <div className="sheet-sub">{sheet.subtitle}</div>}
+        {sheet.stack ? (
+          <div className="sheet-stack-head">
+            <span className="stack">{sheet.stack.map((x, i) => <Cover key={i} song={x} className={`st st${i}`} />)}</span>
+            <span style={{ minWidth: 0 }}><h3>{sheet.title}</h3>{sheet.subtitle && <div className="sheet-sub ellipsis">{sheet.subtitle}</div>}</span>
+          </div>
+        ) : <>
+          <h3>{sheet.title}</h3>
+          {sheet.subtitle && <div className="sheet-sub">{sheet.subtitle}</div>}
+        </>}
         {sheet.items.map((item, i) => (
           <button key={`${item.label}-${i}`} type="button" className={`sheet-item ${item.danger ? 'danger' : ''} ${item.accent ? 'accent' : ''} ${item.checked ? 'checked' : ''}`} onClick={() => { if (!item.keepOpen) close(); item.onSelect() }}>
             {item.icon ? <item.icon size={20} /> : <span style={{ width: 20 }} />}
@@ -445,6 +452,27 @@ export function Dialog() {
         </div>
       </form>
     </div>
+  )
+}
+
+/** While songs are picked (long press): the count on top, the menu at the bottom. */
+export function SelectionBar() {
+  const sel = useApp(s => s.selection)
+  const sheetOpen = useApp(s => !!s.sheet || !!s.dialog)
+  if (!sel) return null
+  const n = Object.keys(sel.items).length
+  return (
+    <>
+      <div className="sel-top" role="toolbar" aria-label={t('Sélection')}>
+        <button type="button" className="icon-btn" style={{ color: 'var(--text)' }} onClick={() => useApp.getState().clearSelection()} aria-label={t('Annuler la sélection')}><X size={24} /></button>
+        <span className="sel-count">{n === 1 ? t('1 titre sélectionné') : t('{n} titres sélectionnés', { n })}</span>
+        {sel.all.length > n && <button type="button" className="link-btn" style={{ marginTop: 0 }} onClick={() => useApp.getState().selectAll(selKey)}>{t('Tout')}</button>}
+      </div>
+      <div className="sel-bottom" hidden={sheetOpen}>
+        <button type="button" className="btn primary wide" onClick={selectionMenu}><MoreVertical size={20} />{n === 1 ? t('Que faire de ce titre ?') : t('Que faire de ces {n} titres ?', { n })}</button>
+        <p className="sel-hint">{t('Touche d’autres titres pour les ajouter')}</p>
+      </div>
+    </>
   )
 }
 

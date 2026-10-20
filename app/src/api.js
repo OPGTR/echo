@@ -48,7 +48,8 @@ export const api = {
   findArtist: name => call(`/catalogue/find-artist${q({ name })}`),
 
   downloads: () => call('/downloads'),
-  download: items => call('/downloads', { method: 'POST', body: { items } }),
+  download: (items, { play = false } = {}) => call('/downloads', { method: 'POST', body: { items, play } }),
+  waitDownload: (deezerId, timeout = 60000) => call(`/downloads/wait${q({ deezer_id: deezerId, timeout })}`),
   cancelDownload: id => call(`/downloads/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: {} }),
   retryDownload: id => call(`/downloads/${encodeURIComponent(id)}/retry`, { method: 'POST', body: {} }),
   clearDownloads: () => call('/downloads', { method: 'DELETE' }),
@@ -70,6 +71,7 @@ export const api = {
   mixArtists: () => call('/mixes/artists'),
   customMix: (artists, era) => call('/mixes/custom', { method: 'POST', body: { artists, era } }),
 
+  artistMix: id => call(`/mixes/artist/${encodeURIComponent(id)}`),
   dislikes: () => call('/dislikes'),
   dislike: song => call('/dislikes', { method: 'POST', body: { title: song.title, artist: song.artist, deezer_id: song.deezer_id || null } }),
   undislike: song => call('/dislikes/remove', { method: 'POST', body: song.key ? { key: song.key } : { title: song.title, artist: song.artist, deezer_id: song.deezer_id || null } }),

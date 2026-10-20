@@ -5,15 +5,15 @@ import { api, setServer } from './api'
 import { connectServer, serverLogs, storagePaths, onBackButton, minimize, onResume } from './native'
 import Home, { MixScreen } from './screens/Home'
 import Search, { CatalogueAlbum, CatalogueArtist } from './screens/Search'
-import Library, { LocalAlbum, LocalArtist } from './screens/Library'
+import Library, { LocalAlbum, LocalArtist, FollowsScreen } from './screens/Library'
 import { Downloads, Onboarding, Startup } from './screens/Settings'
-import Playlists, { PlaylistScreen, ImportScreen, MixCreate, LikedScreen, AddSongs } from './screens/Playlists'
+import Playlists, { PlaylistScreen, ImportScreen, MixCreate, LikedScreen, AddSongs, CoverPicker } from './screens/Playlists'
 import { SettingsHome, ThemeScreen, EqualizerScreen, QualityScreen, AudioTest, SourcesScreen, FoldersScreen, StartScreen, UpdateScreen, DislikesScreen } from './screens/Preferences'
 import { DEFAULT_PREFS } from './store'
 import { applyTheme } from './theme'
 import { applyEqualizer } from './player'
 import { appInfo } from './native'
-import { TabBar, MiniPlayer, FullPlayer, ActionSheet, Dialog, Toasts } from './components/Chrome'
+import { TabBar, MiniPlayer, FullPlayer, ActionSheet, Dialog, Toasts, SelectionBar } from './components/Chrome'
 
 function Screen() {
   const tab = useApp(s => s.tab)
@@ -41,6 +41,8 @@ function Screen() {
       case 'import': return <ImportScreen />
       case 'mix-create': return <MixCreate />
       case 'dislikes': return <DislikesScreen />
+      case 'follows': return <FollowsScreen />
+      case 'cover': return <CoverPicker id={top.id} />
       default: return null
     }
   }
@@ -59,6 +61,7 @@ export default function App() {
   const [logs, setLogs] = useState([])
 
   const start = async () => {
+    const begun = Date.now()
     setPhase('starting'); setError('')
     try {
       setServer(await connectServer())
@@ -73,6 +76,9 @@ export default function App() {
       applyTheme(prefs)
       applyEqualizer(prefs.eq)
       restoreSession()
+      // Long enough to read the sentence of the start screen.
+      const left = 2200 - (Date.now() - begun)
+      if (left > 0) await new Promise(r => setTimeout(r, left))
       setPhase(settings.onboarded ? 'ready' : 'onboarding')
       // In the background: new releases of artists you follow, a new version of Écho.
       useApp.getState().refreshFollows()
@@ -124,7 +130,7 @@ export default function App() {
     return () => ro.disconnect()
   }, [phase])
   // Some screens are a step to finish (create a mix): no tabs under them.
-  const focused = useApp(s => ['mix-create'].includes(s.stack[s.stack.length - 1]?.type))
+  const focused = useApp(s => !!s.selection || ['mix-create', 'add-songs', 'cover'].includes(s.stack[s.stack.length - 1]?.type))
 
   if (phase === 'starting' || phase === 'failed') return <Startup error={phase === 'failed' ? error : ''} logs={logs} onRetry={start} />
   if (phase === 'onboarding') return <Onboarding onDone={() => setPhase('ready')} />
@@ -135,6 +141,7 @@ export default function App() {
         <MiniPlayer />
         <TabBar />
       </div>
+      <SelectionBar />
       <FullPlayer />
       <ActionSheet />
       <Dialog />
