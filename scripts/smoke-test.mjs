@@ -59,7 +59,7 @@ const PORT = 3600 + Math.floor(Math.random() * 300)
 const B = `http://127.0.0.1:${PORT}/api`
 let log = ''
 const server = spawn(nodeBin, ['-r', path.join(here, 'simulate-android.cjs'), path.join(root, 'www', 'nodejs', 'index.js')], {
-  env: { ...process.env, ECHO_DEV: '1', ECHO_PORT: String(PORT), ECHO_DATA_ROOT: path.join(tmp, 'app'), ECHO_DEEZER_API: DEEZER, ECHO_LYRICS_API: `${DEEZER}/lrclib`, ECHO_RELEASE_API: `${DEEZER}/release`, ECHO_MUSIC_DIR: shared, ECHO_MEDIA_DIR: media, PATH: '/nonexistent' },
+  env: { ...process.env, ECHO_DEV: '1', ECHO_NO_AUTOVERIFY: '1', ECHO_PORT: String(PORT), ECHO_DATA_ROOT: path.join(tmp, 'app'), ECHO_DEEZER_API: DEEZER, ECHO_LYRICS_API: `${DEEZER}/lrclib`, ECHO_RELEASE_API: `${DEEZER}/release`, ECHO_MUSIC_DIR: shared, ECHO_MEDIA_DIR: media, PATH: '/nonexistent' },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
 server.stdout.on('data', d => { log += d })
@@ -235,6 +235,20 @@ try {
     const notes = readNotes('Intro\n\n## Nouveautés dans 0.2.0\n\n### Améliorations\n- Un [lien](https://x) et **gras**\n### Corrections\n- Bug\n\n---\n- Quel fichier')
     ok('release notes read as sections', notes.length === 2 && notes[0].title === 'Améliorations' && notes[0].items[0] === 'Un lien et gras' && notes[1].items.length === 1, JSON.stringify(notes))
   }
+  // -------------------------------------------------- 0.3
+  const mixesBefore = await api('/playlists')
+  ok('a mix stays out of your playlists until you add it', !mixesBefore.some(p => p.kind === 'mix'), mixesBefore.map(p => p.kind).join())
+  const artistPl = await api('/mixes/artist/27', {})
+  ok('"Créer un mix de cet artiste" keeps it in Tes mixes', artistPl.kind === 'mix' && (await api('/mixes/mine')).some(p => p.id === artistPl.id), artistPl.error)
+  await api(`/playlists/${artistPl.id}/keep`, { saved: true })
+  ok('…and it can be added to your playlists', (await api('/playlists')).some(p => p.id === artistPl.id))
+  const mine = (await api('/library/tracks?limit=50'))[0]
+  const dupe = await api('/playlists', { name: 'Doublon', tracks: [{ deezer_id: '424242', title: `${mine.title} (Original Score)`, artist: 'Someone Else', duration: mine.duration }] })
+  ok('the song you already have is preferred over another version', dupe.tracks[0]?.local_id === mine.id, JSON.stringify(dupe.tracks[0]).slice(0, 160))
+  await api('/settings', { mix_recent_months: 18 }, 'PUT')
+  ok('how recent "Récentes" is can be set', (await api('/settings')).mix_recent_months === 18)
+  const played = await fetch(`${B}/play/${by['Formation'].deezer_id || '0'}`)
+  ok('the play-through address answers', [200, 206, 404].includes(played.status), String(played.status))
   await api('/settings', { mix_era: 'recent' }, 'PUT')
   const fyRecent = await api('/foryou')
   ok('Pour toi with "recent" songs only (rebuilt, no crash)', fyRecent.era === 'recent' && Array.isArray(fyRecent.mixes), fyRecent.error)

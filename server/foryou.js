@@ -98,7 +98,8 @@ function inEra(when, era, now = Date.now()) {
   // A release date ("2025-11-03") when there is one, else a year.
   const time = /^\d{4}-\d{2}-\d{2}/.test(String(when)) ? Date.parse(String(when).slice(0, 10)) : Date.UTC(Number(when), 6, 1)
   if (!Number.isFinite(time)) return true
-  const recent = now - time < 365 * DAY
+  const months = Number(getSetting('mix_recent_months')) || 12
+  const recent = now - time < months * 30.44 * DAY
   return era === 'recent' ? recent : !recent
 }
 
@@ -195,10 +196,11 @@ async function forYou({ force = false, now = Date.now(), era = null } = {}) {
   const disliked = dislikes.filter()
   result = { ...result, mixes: result.mixes.map(m => ({ ...m, tracks: m.tracks.filter(t => !disliked(t)) })) }
   const byDeezer = new Map(db.prepare('SELECT id, deezer_id, art IS NOT NULL AS has_art FROM tracks WHERE deezer_id IS NOT NULL').all().map(r => [r.deezer_id, r]))
+  const sameSong = require('./playlists').libraryIndex()
   for (const mix of result.mixes) {
     for (const t of mix.tracks) {
       if (t.local_id) continue
-      const own = (t.deezer_id && byDeezer.get(t.deezer_id)) || owned.get(songKey(t.artist, t.title))
+      const own = (t.deezer_id && byDeezer.get(t.deezer_id)) || owned.get(songKey(t.artist, t.title)) || sameSong(t)
       if (own) { t.local_id = own.id; t.has_art = own.has_art }
     }
   }

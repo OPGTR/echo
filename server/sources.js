@@ -107,6 +107,30 @@ function setOrder(ids) {
 const keyOf = id => sources().find(s => s.id === (id || order()[0]))?.key
   || downloadSource()?.key
 
+/**
+ * Checks the sources that need a verification, quietly: a session that
+ * expired (or that an addon update lost) is often given back without anyone
+ * having to verify again. Run at start, then every few hours.
+ */
+async function autoVerify() {
+  const out = []
+  for (const s of sources().filter(x => x.installed && x.enabled && x.access?.kind === 'verification')) {
+    try {
+      const status = await dispatch(getDB(), { action: 'package.verifyAndWait', key: s.key })
+      out.push({ id: s.id, ready: !!status?.authenticated })
+    } catch (error) { out.push({ id: s.id, ready: false, error: error.message }) }
+  }
+  return out
+}
+let autoTimer = null
+function startAutoVerify(every = 4 * 3600000) {
+  if (autoTimer) return
+  const run = () => autoVerify().then(r => { if (r.length) console.log('[sources] auto-check', JSON.stringify(r)) }).catch(() => {})
+  setTimeout(run, 3000)
+  autoTimer = setInterval(run, every)
+  autoTimer.unref?.()
+}
+
 /** What the phone's verification window needs (page, callback, allowed domains). */
 async function verifyInfo(id) {
   const key = keyOf(id)
@@ -173,5 +197,5 @@ async function readLink(kind, url) {
 
 module.exports = {
   service, KNOWN, sources, downloadChain, downloadSource, state, install, installDeezer,
-  setEnabled, setOrder, verifyInfo, verifyComplete, qualityChoices, tierOf, TIERS, findOn, readLink, list: installed,
+  autoVerify, startAutoVerify, setEnabled, setOrder, verifyInfo, verifyComplete, qualityChoices, tierOf, TIERS, findOn, readLink, list: installed,
 }

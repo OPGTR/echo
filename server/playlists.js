@@ -15,6 +15,30 @@ function row(id) {
 }
 function notFound() { return Object.assign(new Error('not found'), { status: 404 }) }
 
+/**
+ * The same song already on the phone, under another name or artist (the
+ * soundtrack version of a song you have from the album): same title once
+ * "(Original Score)", "feat. …" and the like are set aside, same length
+ * within 8 s. Your own copy is preferred over downloading another one.
+ */
+const coreTitle = v => String(v || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .replace(/\s*[([][^)\]]*[)\]]/g, ' ').replace(/\s+(feat\.?|ft\.?|with)\s.*$/, ' ').replace(/[^a-z0-9\u0400-\u04ff\u0590-\u06ff\u3040-\u30ff\u4e00-\u9fff]+/g, ' ').trim()
+function libraryIndex() {
+  const index = new Map()
+  for (const t of getDB().prepare('SELECT id, title, artist, duration, art IS NOT NULL AS has_art, play_count FROM tracks').all()) {
+    const k = coreTitle(t.title)
+    if (!k) continue
+    if (!index.has(k)) index.set(k, [])
+    index.get(k).push(t)
+  }
+  return song => {
+    const list = index.get(coreTitle(song.title)) || []
+    const close = list.filter(t => !song.duration || !t.duration || Math.abs(t.duration - song.duration) <= 8)
+    const sameArtist = close.find(t => coreTitle(t.artist).split(' ')[0] === coreTitle(song.artist).split(' ')[0])
+    return sameArtist || close[0] || null
+  }
+}
+
 /** Songs of a playlist with what the library knows (yours, art, plays). */
 function itemsOf(pl) {
   const db = getDB()
@@ -26,9 +50,15 @@ function itemsOf(pl) {
      WHERE i.playlist_id = ?`).all(pl.id)
   const seen = new Set()
   const songs = []
+  let mine = null
   for (const r of items) {
     if (seen.has(r.item_id)) continue
     seen.add(r.item_id)
+    if (!r.lid) {
+      mine ||= libraryIndex()
+      const own = mine({ title: r.title, artist: r.artist, duration: r.duration })
+      if (own) { r.lid = own.id; r.has_art = own.has_art; r.play_count = own.play_count }
+    }
     songs.push({
       item_id: r.item_id, pos: r.pos, local_id: r.lid || null, deezer_id: r.deezer_id || null,
       title: r.title, artist: r.artist || '', album: r.album || '', cover: r.cover || null, duration: r.duration || null,
@@ -74,8 +104,28 @@ function view(pl, withItems = false) {
   return out
 }
 
-function list() {
-  return getDB().prepare('SELECT * FROM playlists ORDER BY position, created_at DESC').all().map(p => view(p))
+/** Your playlists: the mixes only once you added them ("Mes playlists"). */
+function list({ all = false } = {}) {
+  return getDB().prepare('SELECT * FROM playlists ORDER BY position, created_at DESC').all().map(p => view(p)).filter(p => all || p.kind !== 'mix' || p.meta?.saved)
+}
+
+/** "Tes mixes" (Pour toi): the last mixes you made. Older ones not kept in your playlists go. */
+function mixes(limit = 10) {
+  const db = getDB()
+  const rows = db.prepare("SELECT * FROM playlists WHERE kind = 'mix' ORDER BY created_at DESC").all().map(p => view(p))
+  rows.filter(p => !p.meta?.saved).slice(20).forEach(p => db.prepare('DELETE FROM playlists WHERE id = ?').run(p.id))
+  return rows.slice(0, limit)
+}
+
+/** A mix goes into "Mes playlists" (or leaves them). */
+function keep(id, saved = true) {
+  const pl = row(id)
+  if (!pl) throw notFound()
+  let meta = {}
+  try { meta = pl.meta ? JSON.parse(pl.meta) || {} : {} } catch {}
+  meta.saved = !!saved
+  getDB().prepare('UPDATE playlists SET meta = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(meta), now(), id)
+  return view(row(id))
 }
 function get(id) { const pl = row(id); if (!pl) throw notFound(); return view(pl, true) }
 
@@ -135,8 +185,10 @@ function addItems(id, songs = []) {
   const db = getDB()
   const max = db.prepare('SELECT MAX(pos) AS m FROM playlist_items WHERE playlist_id = ?').get(id).m || 0
   const insert = db.prepare('INSERT INTO playlist_items (playlist_id, pos, local_id, deezer_id, title, artist, album, cover, duration, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  const mine = libraryIndex()
   db.transaction(() => songs.filter(s => s && (s.local_id || s.deezer_id)).slice(0, 5000).forEach((s, i) => {
     const c = clean(s)
+    if (!c.local_id) { const own = mine(c); if (own) c.local_id = own.id }
     insert.run(id, max + i + 1, c.local_id, c.deezer_id, c.title, c.artist, c.album, c.cover, c.duration, now())
   }))()
   db.prepare('UPDATE playlists SET updated_at = ? WHERE id = ?').run(now(), id)
@@ -232,4 +284,4 @@ async function importLink(url, { name } = {}) {
   return addItems(pl.id, songs)
 }
 
-module.exports = { list, get, create, update, remove, arrange, addItems, removeItem, reorder, importLink, serviceOf, view }
+module.exports = { mixes, keep, libraryIndex, coreTitle, list, get, create, update, remove, arrange, addItems, removeItem, reorder, importLink, serviceOf, view }

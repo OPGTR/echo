@@ -18,12 +18,20 @@ class SignedSession {
     this.namespace = sha256([config.namespace || owner, config.baseUrl, config.appVersion || 'ext-1.0', config.platform || 'extension'].join('\n'))
     this.generation = 0
   }
+  // One copy per gateway as well: an addon update (new app version) keeps
+  // the session it had, instead of asking for a new verification.
+  get shared() { return sha256(['shared', this.config.baseUrl].join('\n')) }
   record() {
-    const record = this.storage.read(this.namespace, 'session')
+    let record = this.storage.read(this.namespace, 'session')
+    if (!record.session_id) {
+      let kept = {}
+      try { kept = this.storage.read(this.shared, 'session') } catch {}
+      if (kept.session_id) { record = { ...kept, ...(record.install_id ? {} : { install_id: kept.install_id }) }; this.storage.write(this.namespace, 'session', record) }
+    }
     if (!record.install_id) { record.install_id = crypto.randomBytes(16).toString('hex'); this.save(record) }
     return record
   }
-  save(record) { this.storage.write(this.namespace, 'session', record) }
+  save(record) { this.storage.write(this.namespace, 'session', record); try { this.storage.write(this.shared, 'session', record) } catch {} }
   usable(record) { return !!(record.session_id && record.session_secret && Date.parse(record.expires_at) > Date.now()) }
   endpoint(path) {
     const base = new URL(this.config.baseUrl)
@@ -97,7 +105,7 @@ class SignedSession {
     return this.completeGrant(undefined, signal)
   }
   async refresh(record, signal) {
-    if (!this.config.endpoints?.refresh || Date.parse(record.expires_at) - Date.now() > 3600000) return
+    if (!this.config.endpoints?.refresh || Date.parse(record.expires_at) - Date.now() > 24 * 3600000) return
     if (this.refreshing) return this.refreshing
     this.refreshing = (async () => {
       const generation = this.generation

@@ -58,6 +58,7 @@ function createApp() {
     quality_tier: getSetting('quality_tier') || 'cd',
     mix_era: getSetting('mix_era') || 'both',
     onboarded: getSetting('onboarded') === '1',
+    mix_recent_months: Number(getSetting('mix_recent_months')) || 12,
     platform,
   })
   app.get('/api/settings', wrap(settingsView))
@@ -69,6 +70,11 @@ function createApp() {
     if ('onboarded' in b) setSetting('onboarded', b.onboarded ? '1' : '0')
     if (['hires', 'cd', 'lossy'].includes(b.quality_tier)) setSetting('quality_tier', b.quality_tier)
     if (['recent', 'old', 'both'].includes(b.mix_era)) setSetting('mix_era', b.mix_era)
+    // How recent "Récentes" is, in months (3 to 60); the mixes are made again.
+    if (Number.isFinite(Number(b.mix_recent_months)) && 'mix_recent_months' in b) {
+      setSetting('mix_recent_months', String(Math.max(3, Math.min(60, Math.round(Number(b.mix_recent_months))))))
+      try { fs.rmSync(path.join(require('./paths').dataDir(), 'foryou.json'), { force: true }) } catch {}
+    }
     return settingsView()
   }))
   // The interface's own choices (theme, start page, sections, equalizer…).
@@ -157,6 +163,23 @@ function createApp() {
     res.sendFile(t.art)
   }
   app.get('/api/stream/:id', streamTrack)
+  // A catalogue song the phone's player asks for directly (the queue it
+  // holds goes on even when the app sleeps, screen locked): downloaded first,
+  // then played like any song of yours.
+  app.get('/api/play/:deezer', async (req, res) => {
+    const id = String(req.params.deezer || '').replace(/[^0-9]/g, '')
+    if (!id) return res.status(404).end()
+    try {
+      let local = downloads.ownedTrack(id)
+      if (!local) {
+        const [job] = downloads.enqueue([{ deezer_id: id, play: true, title: String(req.query.title || ''), artist: String(req.query.artist || ''), album: String(req.query.album || ''), cover: String(req.query.cover || ''), duration: Number(req.query.duration) || null }])
+        local = job?.track_id || (await downloads.waitFor(id, 5 * 60000))?.track_id || null
+      }
+      if (!local) return res.status(404).json({ error: 'not downloaded' })
+      req.params.id = local
+      return streamTrack(req, res)
+    } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }) }
+  })
   app.get('/api/art/:id', sendArt)
 
   // Casting: a TV or a speaker on the Wi-Fi plays from a second, LAN-facing
@@ -229,6 +252,15 @@ function createApp() {
     return found
   }))
   app.get('/api/mixes/artist/:id', wrap(req => artistMix(req.params.id)))
+  // "Créer un mix de cet artiste": kept in "Tes mixes" (Pour toi).
+  app.post('/api/mixes/artist/:id', wrap(async req => {
+    const mix = await artistMix(req.params.id)
+    if (!mix.tracks.length) throw Object.assign(new Error('Pas assez de titres pour un mix de cet artiste.'), { status: 404 })
+    const pl = playlists.create({ name: `Mix ${mix.artist.name}`, kind: 'mix', meta: { artist: mix.artist, only: true } })
+    return withOwned(playlists.addItems(pl.id, mix.tracks))
+  }))
+  app.get('/api/mixes/mine', wrap(() => playlists.mixes(10)))
+  app.post('/api/playlists/:id/keep', wrap(req => playlists.keep(req.params.id, req.body?.saved !== false)))
   app.post('/api/mixes/custom', wrap(async req => {
     const era = ['recent', 'old', 'both'].includes(req.body?.era) ? req.body.era : 'both'
     const mix = await customMix(Array.isArray(req.body?.artists) ? req.body.artists : [], { era })
@@ -266,6 +298,7 @@ function createApp() {
   // -------------------------------------------------------------- source
   app.get('/api/source', wrap(() => sources.state()))
   app.post('/api/source/install', wrap(() => sources.installDeezer()))
+  app.post('/api/sources/check', wrap(() => sources.autoVerify().then(() => sources.state())))
   app.post('/api/source/verify-info', wrap(req => sources.verifyInfo(req.body?.id)))
   app.get('/api/sources', wrap(() => sources.state()))
   app.post('/api/sources/:id/install', wrap(req => sources.install(req.params.id)))

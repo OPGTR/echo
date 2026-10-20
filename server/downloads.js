@@ -55,7 +55,7 @@ function waitFor(deezerId, timeoutMs = 60000) {
   return new Promise(resolve => {
     const done = j => { clearTimeout(timer); changes.off('change', check); resolve(j) }
     const check = () => { const j = latest(); if (ended(j)) done(j) }
-    const timer = setTimeout(() => done(latest()), Math.max(1000, Math.min(120000, Number(timeoutMs) || 60000)))
+    const timer = setTimeout(() => done(latest()), Math.max(1000, Math.min(300000, Number(timeoutMs) || 60000)))
     changes.on('change', check)
   })
 }
