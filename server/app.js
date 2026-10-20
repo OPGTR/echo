@@ -10,7 +10,7 @@ const library = require('./library')
 const deezer = require('./deezer')
 const downloads = require('./downloads')
 const sources = require('./sources')
-const { forYou, songKey, topArtists, customMix } = require('./foryou')
+const { forYou, songKey, topArtists, customMix, artistMix } = require('./foryou')
 const playlists = require('./playlists')
 const follows = require('./follows')
 const dislikes = require('./dislikes')
@@ -228,6 +228,7 @@ function createApp() {
     const found = await Promise.all(top.map(async a => { try { const d = await deezer.findArtist(a.name); return d ? { ...deezer.artistOf(d), score: Math.round(a.score) } : { id: null, name: a.name, picture: null, score: Math.round(a.score) } } catch { return { id: null, name: a.name, picture: null, score: Math.round(a.score) } } }))
     return found
   }))
+  app.get('/api/mixes/artist/:id', wrap(req => artistMix(req.params.id)))
   app.post('/api/mixes/custom', wrap(async req => {
     const era = ['recent', 'old', 'both'].includes(req.body?.era) ? req.body.era : 'both'
     const mix = await customMix(Array.isArray(req.body?.artists) ? req.body.artists : [], { era })
@@ -256,7 +257,8 @@ function createApp() {
 
   // ----------------------------------------------------------- downloads
   app.get('/api/downloads', wrap(() => downloads.list()))
-  app.post('/api/downloads', wrap(req => downloads.enqueue(req.body?.items)))
+  app.post('/api/downloads', wrap(req => downloads.enqueue((req.body?.items || []).map(i => (req.body?.play ? { ...i, play: true } : i)))))
+  app.get('/api/downloads/wait', wrap(req => downloads.waitFor(String(req.query.deezer_id || ''), Number(req.query.timeout) || 60000)))
   app.post('/api/downloads/:id/cancel', wrap(req => downloads.cancel(req.params.id)))
   app.post('/api/downloads/:id/retry', wrap(req => downloads.retry(req.params.id)))
   app.delete('/api/downloads', wrap(() => downloads.clearFinished()))

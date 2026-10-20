@@ -17,6 +17,27 @@ function parseName(name) {
   return m ? { version: m[1], build: Number(m[2]), abi: m[3] } : null
 }
 
+/**
+ * The release notes, readable in the app: sections ("Améliorations",
+ * "Corrections"…) with their points, links and bold removed. What follows
+ * "---" (which file to pick, build numbers) is for GitHub only.
+ */
+function readNotes(body = '') {
+  const plain = t => String(t).replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1').trim()
+  const sections = []
+  let current = null
+  for (const raw of String(body).split(/\r?\n/)) {
+    const line = raw.trim()
+    if (/^-{3,}$/.test(line)) break
+    const head = /^#{2,4}\s+(.*)$/.exec(line)
+    if (head) { current = { title: plain(head[1]), items: [] }; sections.push(current); continue }
+    const item = /^[-*]\s+(.*)$/.exec(line)
+    if (item) { if (!current) { current = { title: '', items: [] }; sections.push(current) } current.items.push(plain(item[1])); continue }
+  }
+  // A section that only holds sub-sections ("Nouveautés dans 0.2.0") goes.
+  return sections.filter(x => x.items.length)
+}
+
 async function check({ build = 0, force = false } = {}) {
   if (!force && cache && Date.now() - cache.at < 30 * 60 * 1000) return { ...cache.value, available: cache.value.build > Number(build || 0) }
   const res = await fetch(RELEASE, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'Echo' } })
@@ -27,6 +48,8 @@ async function check({ build = 0, force = false } = {}) {
   const value = {
     version: top?.version || null, build: top?.build || 0,
     notes: String(rel.body || '').slice(0, 4000),
+    changes: readNotes(rel.body),
+    title: rel.name || null,
     assets: Object.fromEntries(apks.filter(a => a.build === top?.build).map(a => [a.abi, { url: a.url, size: a.size }])),
   }
   cache = { at: Date.now(), value }
@@ -60,4 +83,4 @@ async function download({ abi = 'arm64-v8a', build = 0 } = {}) {
 
 const status = () => job
 
-module.exports = { check, download, status, parseName }
+module.exports = { readNotes, check, download, status, parseName }

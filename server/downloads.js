@@ -26,9 +26,38 @@ const active = new Map() // job id -> AbortController
 let pumping = false
 
 const now = () => Date.now()
+const changes = new (require('events'))()
+changes.setMaxListeners(100)
 function update(id, fields) {
   const keys = Object.keys(fields)
   getDB().prepare(`UPDATE downloads SET ${keys.map(k => `${k} = @${k}`).join(', ')}, updated_at = @updated_at WHERE id = @id`).run({ ...fields, updated_at: now(), id })
+  changes.emit('change', id)
+}
+
+/**
+ * Waits until the download of `deezerId` ends (done, error, cancelled), up
+ * to `timeoutMs`; answers with its job. The player waits this way instead of
+ * asking again and again: a phone in a pocket slows the app's timers down to
+ * once a minute, an answer arriving still wakes it at once.
+ */
+function waitFor(deezerId, timeoutMs = 60000) {
+  const id = String(deezerId)
+  const latest = () => {
+    const owned = ownedTrack(id)
+    const j = getDB().prepare('SELECT * FROM downloads WHERE deezer_id = ? ORDER BY updated_at DESC LIMIT 1').get(id)
+    if (j?.status === 'done' && (j.track_id || owned)) return { ...j, track_id: j.track_id || owned }
+    if (!j && owned) return { deezer_id: id, status: 'done', track_id: owned }
+    return j || null
+  }
+  const ended = j => j && ['done', 'error', 'cancelled'].includes(j.status)
+  const first = latest()
+  if (ended(first) || !first) return Promise.resolve(first)
+  return new Promise(resolve => {
+    const done = j => { clearTimeout(timer); changes.off('change', check); resolve(j) }
+    const check = () => { const j = latest(); if (ended(j)) done(j) }
+    const timer = setTimeout(() => done(latest()), Math.max(1000, Math.min(120000, Number(timeoutMs) || 60000)))
+    changes.on('change', check)
+  })
 }
 const job = id => getDB().prepare('SELECT * FROM downloads WHERE id = ?').get(id)
 
@@ -51,12 +80,13 @@ function enqueue(items) {
     const have = ownedTrack(deezerId)
     if (have) { out.push({ deezer_id: deezerId, status: 'done', track_id: have }); continue }
     const existing = db.prepare(`SELECT * FROM downloads WHERE deezer_id = ? AND status IN ('queued', 'downloading', 'saving')`).get(deezerId)
-    if (existing) { out.push(existing); continue }
+    // Wanted for playing now: it goes before a long "download all".
+    if (existing) { if (item.play && existing.status === 'queued') db.prepare('UPDATE downloads SET created_at = 0 WHERE id = ?').run(existing.id); out.push(existing); continue }
     const row = {
       id: crypto.randomUUID(), deezer_id: deezerId,
       title: String(item.title || '').slice(0, 300), artist: String(item.artist || '').slice(0, 300),
       album: String(item.album || '').slice(0, 300), cover: typeof item.cover === 'string' && /^https:\/\//.test(item.cover) ? item.cover : null,
-      duration: Number(item.duration) || null, status: 'queued', progress: 0, created_at: now(), updated_at: now(),
+      duration: Number(item.duration) || null, status: 'queued', progress: 0, created_at: item.play ? 0 : now(), updated_at: now(),
     }
     db.prepare(`INSERT INTO downloads (id, deezer_id, title, artist, album, cover, duration, status, progress, created_at, updated_at)
       VALUES (@id, @deezer_id, @title, @artist, @album, @cover, @duration, @status, @progress, @created_at, @updated_at)`).run(row)
@@ -284,4 +314,4 @@ function resume() {
   setImmediate(pump)
 }
 
-module.exports = { makeDir, enqueue, list, cancel, retry, clearFinished, resume, pump, ownedTrack, saveInto, writeTags }
+module.exports = { waitFor, makeDir, enqueue, list, cancel, retry, clearFinished, resume, pump, ownedTrack, saveInto, writeTags }

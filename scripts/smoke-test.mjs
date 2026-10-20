@@ -219,6 +219,22 @@ try {
   const fyNo = await api('/foryou')
   ok('nor in Pour toi', !(fyNo.mixes || []).some(m => m.tracks.some(t => t.title === hated.title && t.artist === hated.artist)))
   ok('and can be taken back', (await api('/dislikes/remove', { title: hated.title, artist: hated.artist })).length === 0)
+  // -------------------------------------------------- 0.2
+  const am = await api('/mixes/artist/27')
+  ok('the mix of one artist holds only their songs', am.tracks?.length > 0 && am.tracks.every(x => x.artist === 'Daft Punk'), `${am.tracks?.length} ${am.error || ''}`)
+  const pl4 = await api('/playlists', { name: 'Image', tracks: am.tracks.slice(0, 5) })
+  const items4 = pl4.tracks.map(x => x.item_id)
+  const withCover = await api(`/playlists/${pl4.id}`, { cover_items: [items4[4], items4[3], items4[2], items4[1]] }, 'PUT')
+  ok('a playlist keeps the 4 songs chosen for its picture', withCover.custom_cover === true && withCover.meta?.cover_items?.[0] === items4[4], JSON.stringify(withCover.meta))
+  ok('…and goes back to the first 4', (await api(`/playlists/${pl4.id}`, { cover_items: [] }, 'PUT')).custom_cover === false)
+  const waited = await api('/downloads/wait?deezer_id=999999999&timeout=1000')
+  ok('waiting on an unknown download answers at once', waited === null || waited?.status === undefined || !waited, JSON.stringify(waited))
+  {
+    const { createRequire } = await import('node:module')
+    const { readNotes } = createRequire(import.meta.url)('../server/update.js')
+    const notes = readNotes('Intro\n\n## Nouveautés dans 0.2.0\n\n### Améliorations\n- Un [lien](https://x) et **gras**\n### Corrections\n- Bug\n\n---\n- Quel fichier')
+    ok('release notes read as sections', notes.length === 2 && notes[0].title === 'Améliorations' && notes[0].items[0] === 'Un lien et gras' && notes[1].items.length === 1, JSON.stringify(notes))
+  }
   await api('/settings', { mix_era: 'recent' }, 'PUT')
   const fyRecent = await api('/foryou')
   ok('Pour toi with "recent" songs only (rebuilt, no crash)', fyRecent.era === 'recent' && Array.isArray(fyRecent.mixes), fyRecent.error)

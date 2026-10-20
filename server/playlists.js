@@ -55,11 +55,19 @@ function view(pl, withItems = false) {
     .map(r => r.cover || (r.lid && r.has_art ? `local:${r.lid}` : null)).filter(Boolean)
   let meta = null
   try { meta = pl.meta ? JSON.parse(pl.meta) : null } catch {}
+  // Your choice of 4 songs for the picture (items still in the playlist).
+  let chosen = []
+  if (Array.isArray(meta?.cover_items) && meta.cover_items.length) {
+    const pick = db.prepare(`SELECT i.cover, t.id AS lid, t.art IS NOT NULL AS has_art FROM playlist_items i LEFT JOIN tracks t ON t.id = i.local_id OR (i.local_id IS NULL AND i.deezer_id IS NOT NULL AND t.deezer_id = i.deezer_id) WHERE i.playlist_id = ? AND i.id = ?`)
+    const rows = meta.cover_items.map(item => pick.get(pl.id, Number(item)))
+    if (rows.every(Boolean)) chosen = rows.map(r => r.cover || (r.lid && r.has_art ? `local:${r.lid}` : ''))
+  }
   const out = {
     id: pl.id, name: pl.name, kind: pl.kind, source: pl.source, source_url: pl.source_url,
     sort: pl.sort, sort_dir: pl.sort_dir, meta,
     count: stats.n || 0, duration: Math.round(stats.secs || 0),
-    covers: [...new Set(covers)].slice(0, 4),
+    covers: chosen.length === 4 ? chosen : [...new Set(covers)].slice(0, 4),
+    custom_cover: chosen.length === 4,
     created_at: pl.created_at, updated_at: pl.updated_at,
   }
   if (withItems) out.tracks = itemsOf(pl)
@@ -88,6 +96,14 @@ function update(id, body = {}) {
   if (typeof body.name === 'string' && body.name.trim()) db.prepare('UPDATE playlists SET name = ?, updated_at = ? WHERE id = ?').run(body.name.trim().slice(0, 120), now(), id)
   if (SORTS.has(body.sort)) db.prepare('UPDATE playlists SET sort = ?, updated_at = ? WHERE id = ?').run(body.sort, now(), id)
   if (body.sort_dir === 'asc' || body.sort_dir === 'desc') db.prepare('UPDATE playlists SET sort_dir = ? WHERE id = ?').run(body.sort_dir, id)
+  // The picture: 4 songs of the playlist (item ids), or [] / null for the first 4.
+  if ('cover_items' in body) {
+    let meta = {}
+    try { meta = pl.meta ? JSON.parse(pl.meta) || {} : {} } catch {}
+    const items = Array.isArray(body.cover_items) ? body.cover_items.map(Number).filter(Number.isInteger).slice(0, 4) : []
+    if (items.length === 4) meta.cover_items = items; else delete meta.cover_items
+    db.prepare('UPDATE playlists SET meta = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(meta), now(), id)
+  }
   return get(id)
 }
 

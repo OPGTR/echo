@@ -92,11 +92,14 @@ function coversOf(items) {
 
 // ------------------------------------------------------------------ eras
 // "Récentes": from the artist's releases of the last 3 years; "Anciennes":
-// from releases more than 5 years old; "Les deux": their best songs.
-function inEra(year, era, now = Date.now()) {
-  if (!year || era === 'both') return true
-  const current = new Date(now).getFullYear()
-  return era === 'recent' ? year >= current - 3 : year <= current - 6
+// from releases more than a year old; "Les deux": their best songs.
+function inEra(when, era, now = Date.now()) {
+  if (!when || era === 'both') return true
+  // A release date ("2025-11-03") when there is one, else a year.
+  const time = /^\d{4}-\d{2}-\d{2}/.test(String(when)) ? Date.parse(String(when).slice(0, 10)) : Date.UTC(Number(when), 6, 1)
+  if (!Number.isFinite(time)) return true
+  const recent = now - time < 365 * DAY
+  return era === 'recent' ? recent : !recent
 }
 
 /** An artist's songs for a mix, in the chosen era. */
@@ -105,10 +108,10 @@ async function artistSongs(artistId, era = 'both', { now = Date.now(), want = 10
   if (era === 'both') return top.map(t => deezer.song(t))
   let albums = []
   try { albums = await deezer.artistAlbums(artistId) } catch {}
-  const years = new Map(albums.map(a => [a.id, a.year]))
-  const out = top.filter(t => inEra(years.get(String(t.album?.id)), era, now)).map(t => deezer.song(t))
+  const dates = new Map(albums.map(a => [a.id, a.release_date || a.year]))
+  const out = top.filter(t => inEra(dates.get(String(t.album?.id)), era, now)).map(t => deezer.song(t))
   if (out.length < want) {
-    const pick = albums.filter(a => inEra(a.year, era, now) && a.type !== 'compile')
+    const pick = albums.filter(a => inEra(a.release_date || a.year, era, now) && a.type !== 'compile')
     const chosen = era === 'recent' ? pick.slice(0, 2) : shuffle(pick, rng(`${artistId}${new Date(now).toISOString().slice(0, 10)}`)).slice(0, 2)
     for (const a of chosen) {
       try { const full = await deezer.album(a.id); out.push(...full.tracks) } catch {}
@@ -199,19 +202,27 @@ async function forYou({ force = false, now = Date.now(), era = null } = {}) {
       if (own) { t.local_id = own.id; t.has_art = own.has_art }
     }
   }
-  return { ...result, rediscover: rediscover(db, { now }).filter(t => !disliked(t)) }
+  // "À redécouvrir" is one of the mixes too, right after "Découvertes".
+  const again = rediscover(db, { now }).filter(t => !disliked(t))
+  let mixes = result.mixes.filter(m => m.kind !== 'rediscover')
+  if (again.length >= 3) {
+    const at = mixes.findIndex(m => m.kind === 'discover')
+    const mix = { id: 'rediscover', kind: 'rediscover', index: 0, seed: null, artists: [...new Set(again.map(t => t.artist))].slice(0, 4), covers: [], tracks: again }
+    mixes = at >= 0 ? [...mixes.slice(0, at + 1), mix, ...mixes.slice(at + 1)] : [...mixes, mix]
+  }
+  return { ...result, mixes, rediscover: again }
 }
 
 /**
  * "À redécouvrir": songs you played a lot, and not lately.
- * Many plays overall, none in the last 6 weeks.
+ * Played at least 3 times, not in the last 3 weeks.
  */
 function rediscover(db, { now = Date.now(), limit = 30 } = {}) {
-  const since = now - 42 * DAY
+  const since = now - 21 * DAY
   return db.prepare(`
     SELECT id, title, artist, album, duration, art IS NOT NULL AS has_art, deezer_id, play_count, last_played
       FROM tracks
-     WHERE play_count >= 5 AND last_played IS NOT NULL AND last_played < ?
+     WHERE play_count >= 3 AND last_played IS NOT NULL AND last_played < ?
      ORDER BY play_count DESC, last_played ASC
      LIMIT ?`).all(since, limit).map(t => ({ ...localSong(t), play_count: t.play_count, last_played: t.last_played }))
 }
@@ -248,4 +259,37 @@ async function customMix(picked = [], { era = 'both', now = Date.now() } = {}) {
   return { artists: artists.map(a => ({ id: String(a.id), name: a.name })), era, tracks }
 }
 
-module.exports = { forYou, build, seeds, songKey, rediscover, topArtists, customMix, artistSongs }
+
+/**
+ * The mix of one artist: only their songs. Their best known, then songs from
+ * their albums and singles (the ones you never played first), a few of yours
+ * among them. Different each day.
+ */
+async function artistMix(artistId, { now = Date.now() } = {}) {
+  const db = getDB()
+  const id = String(artistId)
+  const random = rng(`${id}${new Date(now).toISOString().slice(0, 10)}`)
+  const { owned } = library(db)
+  const disliked = dislikes.filter()
+  const info = await deezer.artistInfo(id).catch(() => null)
+  const top = ((await deezer.topTracks(id).catch(() => [])) || []).map(t => deezer.song(t))
+  let albums = []
+  try { albums = (await deezer.artistAlbums(id)).filter(a => a.type !== 'compile') } catch {}
+  const deep = []
+  for (const a of shuffle(albums, random).slice(0, 5)) {
+    try { const full = await deezer.album(a.id); deep.push(...full.tracks) } catch {}
+  }
+  const used = new Set()
+  const mine = t => String(t.artist_id || '') === id || norm(mainArtist(t.artist)) === norm(info?.name || '')
+  const fresh = t => { const k = songKey(t.artist, t.title); if (!t.title || used.has(k) || disliked(t) || !mine(t)) return false; used.add(k); return true }
+  const unheard = t => !owned.has(songKey(t.artist, t.title))
+  const best = top.filter(fresh).slice(0, 12)
+  const rest = shuffle(deep.filter(fresh), random)
+  const tracks = spread(shuffle([...best, ...rest.filter(unheard).slice(0, 14), ...rest.filter(t => !unheard(t)).slice(0, 4)], random)).slice(0, 30).map(t => {
+    const own = !t.local_id && owned.get(songKey(t.artist, t.title))
+    return own ? { ...t, local_id: own.id, has_art: own.has_art } : t
+  })
+  return { artist: { id, name: info?.name || tracks[0]?.artist || '' , picture: info?.picture || null }, tracks }
+}
+
+module.exports = { artistMix, forYou, build, seeds, songKey, rediscover, topArtists, customMix, artistSongs }
