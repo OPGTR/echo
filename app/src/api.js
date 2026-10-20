@@ -72,6 +72,10 @@ export const api = {
   customMix: (artists, era) => call('/mixes/custom', { method: 'POST', body: { artists, era } }),
 
   artistMix: id => call(`/mixes/artist/${encodeURIComponent(id)}`),
+  createArtistMix: id => call(`/mixes/artist/${encodeURIComponent(id)}`, { method: 'POST', body: {} }),
+  myMixes: () => call('/mixes/mine'),
+  keepMix: (id, saved = true) => call(`/playlists/${encodeURIComponent(id)}/keep`, { method: 'POST', body: { saved } }),
+  checkSources: () => call('/sources/check', { method: 'POST', body: {} }),
   dislikes: () => call('/dislikes'),
   dislike: song => call('/dislikes', { method: 'POST', body: { title: song.title, artist: song.artist, deezer_id: song.deezer_id || null } }),
   undislike: song => call('/dislikes/remove', { method: 'POST', body: song.key ? { key: song.key } : { title: song.title, artist: song.artist, deezer_id: song.deezer_id || null } }),
@@ -102,4 +106,6 @@ export const api = {
 
 const withToken = url => token ? `${url}${url.includes('?') ? '&' : '?'}t=${token}` : url
 export const streamUrl = id => withToken(`${base}/api/stream/${encodeURIComponent(id)}`)
+/** A catalogue song for the phone's player: downloaded by the server, then streamed. */
+export const playUrl = song => withToken(`${base}/api/play/${encodeURIComponent(song.deezer_id)}?${new URLSearchParams({ title: song.title || '', artist: song.artist || '', album: song.album || '', duration: String(song.duration || ''), cover: song.cover || '' })}`)
 export const artUrl = id => withToken(`${base}/api/art/${encodeURIComponent(id)}`)

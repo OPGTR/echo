@@ -20,9 +20,9 @@ export function Mosaic({ pl, size = 60 }) {
   const box = { width: size, height: size, minWidth: size, maxWidth: size, minHeight: size, maxHeight: size }
   if (pl.kind === 'mix' && !pl.custom_cover) return <div className="mosaic" style={box}><Rings seed={pl.id} center={pl.covers?.[0] ? coverSrc(pl.covers[0]) : null} /></div>
   const covers = pl.covers || []
-  if (!covers.length || (covers.length < 4 && !covers[0])) return <div className="mosaic empty" style={box}><ListMusic size={Math.round(size / 3)} /></div>
+  if (!covers.length || (covers.length < 4 && !covers[0])) return <div className="mosaic blank" style={box}><ListMusic size={Math.round(size / 3)} /></div>
   if (covers.length < 4 && covers[0]) return <img className="mosaic" src={coverSrc(covers[0])} alt="" style={box} />
-  return <div className="mosaic grid" style={box}>{covers.slice(0, 4).map((c, i) => (c ? <img key={`${c}-${i}`} src={coverSrc(c)} alt="" loading="lazy" /> : <span key={i} className="cell empty" />))}</div>
+  return <div className="mosaic grid" style={box}>{covers.slice(0, 4).map((c, i) => (c ? <img key={`${c}-${i}`} src={coverSrc(c)} alt="" loading="lazy" /> : <span key={i} className="cell blank" />))}</div>
 }
 
 const sortLabel = { custom: 'Ordre perso', title: 'Titre', artist: 'Artiste', added: 'Date d’ajout', played: 'Les plus écoutés', duration: 'Durée' }
@@ -45,6 +45,60 @@ export default function Playlists() {
     title: t('Trier les playlists'),
     items: [['custom', 'Ordre perso'], ['name', 'Nom'], ['recent', 'Modifiées récemment']].map(([id, label]) => ({ label: t(label), checked: order === id, onSelect: () => { setOrder(id); try { localStorage.setItem('echo-pl-order', id) } catch {} } })),
   })
+  // Long press on a playlist: put them in your order by dragging.
+  const [arranging, setArranging] = useState(null) // the playlists, in the order being made
+  const [drag, setDrag] = useState(null)
+  const press = useRef(null)
+  const startArrange = () => { setOrder('custom'); try { localStorage.setItem('echo-pl-order', 'custom') } catch {} ; setArranging(lists ? [...lists] : []); navigator.vibrate?.(12) }
+  const finish = async () => {
+    const ids = arranging.map(p => p.id)
+    setArranging(null)
+    try { setLists(await api.arrangePlaylists(ids)) } catch (e) { useApp.getState().toast(e.message) }
+  }
+  const ROW = 76
+  const startDrag = (e, from) => {
+    e.preventDefault()
+    const y0 = e.clientY, el = e.currentTarget
+    el.setPointerCapture?.(e.pointerId)
+    let to = from
+    const move = ev => { const dy = ev.clientY - y0; to = Math.max(0, Math.min(arranging.length - 1, from + Math.round(dy / ROW))); setDrag({ from, to, dy }) }
+    const up = () => {
+      el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up)
+      setDrag(null)
+      if (to === from) return
+      const next = [...arranging]; const [moved] = next.splice(from, 1); next.splice(to, 0, moved); setArranging(next)
+    }
+    el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up)
+    setDrag({ from, to: from, dy: 0 })
+  }
+  const shift = i => {
+    if (!drag) return 0
+    if (i === drag.from) return drag.dy
+    if (drag.from < drag.to && i > drag.from && i <= drag.to) return -ROW
+    if (drag.from > drag.to && i < drag.from && i >= drag.to) return ROW
+    return 0
+  }
+  const pressStart = e => { const p = e.touches?.[0]; press.current = { x: p?.clientX, y: p?.clientY, timer: setTimeout(() => { press.current = { fired: true }; startArrange() }, 480) } }
+  const pressMove = e => { const p = e.touches?.[0], st = press.current; if (st?.timer && p && Math.hypot(p.clientX - st.x, p.clientY - st.y) > 10) { clearTimeout(st.timer); press.current = null } }
+  const pressEnd = () => { if (press.current?.timer) clearTimeout(press.current.timer) }
+  const sub = pl => [pl.kind === 'mix' ? t('Mix gardé') : pl.source ? t('Importée de {s}', { s: SOURCE[pl.source] || pl.source }) : null, plural(pl.count, '1 titre', '{n} titres'), pl.duration ? fmtLength(pl.duration) : null].filter(Boolean).join(' · ')
+  if (arranging) return (
+    <div className="page">
+      <div className="page-head"><h1>{t('Playlists')}</h1><button type="button" className="link-btn" style={{ marginTop: 0, fontSize: 15 }} onClick={finish}>{t('OK')}</button></div>
+      <p className="note" style={{ marginTop: 0 }}>{t('Glisse une playlist par sa poignée pour la déplacer, puis touche OK.')}</p>
+      <div className="pl-row static">
+        <span className="mosaic liked" style={{ width: 60, height: 60 }}><Heart size={26} fill="currentColor" /></span>
+        <span className="text"><span className="title">{t('Titres aimés')}</span><span className="sub">{t('Toujours en premier')}</span></span>
+      </div>
+      {arranging.map((pl, i) => (
+        <div key={pl.id} className={`pl-row arranging ${drag?.from === i ? 'lifted' : ''}`} style={{ transform: `translateY(${shift(i)}px)`, transition: drag && drag.from !== i ? 'transform .15s' : 'none' }}>
+          <Mosaic pl={pl} />
+          <span className="text"><span className="title">{pl.name}</span><span className="sub">{sub(pl)}</span></span>
+          <button type="button" className="grip" onPointerDown={e => startDrag(e, i)} aria-label={t('Déplacer « {name} »', { name: pl.name })}><GripVertical size={22} /></button>
+        </div>
+      ))}
+    </div>
+  )
   return (
     <div className="page">
       <div className="page-head"><h1>{t('Playlists')}</h1><HeadActions /></div>
@@ -59,15 +113,17 @@ export default function Playlists() {
         <span className="text"><span className="title">{t('Titres aimés')}</span><span className="sub">{t('Tes coups de cœur')}</span></span>
       </button>
       {sorted?.map(pl => (
-        <button type="button" key={pl.id} className="pl-row" onClick={() => open({ type: 'playlist', id: pl.id })}>
+        <button type="button" key={pl.id} className="pl-row" onClick={() => { if (press.current?.fired) { press.current = null; return } open({ type: 'playlist', id: pl.id }) }}
+          onTouchStart={pressStart} onTouchMove={pressMove} onTouchEnd={pressEnd} onContextMenu={e => { e.preventDefault(); startArrange() }}>
           <Mosaic pl={pl} />
           <span className="text">
             <span className="title">{pl.name}</span>
-            <span className="sub">{[pl.kind === 'mix' ? t('Mix gardé') : pl.source ? t('Importée de {s}', { s: SOURCE[pl.source] || pl.source }) : null, plural(pl.count, '1 titre', '{n} titres'), pl.duration ? fmtLength(pl.duration) : null].filter(Boolean).join(' · ')}</span>
+            <span className="sub">{sub(pl)}</span>
           </span>
         </button>
       ))}
       {sorted && !sorted.length && <p className="note" style={{ marginTop: 18 }}>{t('Crée une playlist, ou importe celles de Spotify, YouTube Music ou Deezer avec leur lien.')}</p>}
+      {sorted && sorted.length > 1 && <p className="note" style={{ marginTop: 14, fontSize: 13 }}>{t('Appui long sur une playlist pour changer leur ordre.')}</p>}
     </div>
   )
 }
@@ -288,7 +344,7 @@ export function CoverPicker({ id }) {
       <div className="page-head" style={{ paddingTop: 0 }}><h1>{t('Image de la playlist')}</h1></div>
       <div className="cover-head">
         <div className="mosaic grid" style={{ width: 104, height: 104, minWidth: 104 }}>
-          {[0, 1, 2, 3].map(i => preview[i] ? <Cover key={i} song={preview[i]} className="cell" /> : <span key={i} className="cell empty" />)}
+          {[0, 1, 2, 3].map(i => preview[i] ? <Cover key={i} song={preview[i]} className="cell" /> : <span key={i} className="cell blank" />)}
         </div>
         <p className="note" style={{ margin: 0 }}>{t('Choisis 4 titres de la playlist. Ils forment l’image, dans l’ordre où tu les touches.')}</p>
       </div>

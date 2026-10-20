@@ -1,7 +1,7 @@
 // "Pour toi": a greeting, today's mixes (made from what you listen to), what
 // you were listening to, what arrived lately.
 import React, { useEffect, useState } from 'react'
-import { Loader2, Play } from 'lucide-react'
+import { Loader2, Play, Plus, Check } from 'lucide-react'
 import { api } from '../api'
 import { useApp } from '../store'
 import { playList, coverOf } from '../player'
@@ -50,28 +50,59 @@ function NewFromArtists() {
   )
 }
 
-/** The mix of one artist (only their songs): built when you open it. */
+/** The mix of one artist (only their songs): made and kept in "Tes mixes". */
 export function ArtistMixCard({ id, name, picture }) {
   const [busy, setBusy] = useState(false)
-  const get = async () => {
+  const make = async () => {
     setBusy(true)
-    try {
-      const r = await api.artistMix(id)
-      if (!r.tracks?.length) { useApp.getState().toast(t('Pas assez de titres pour un mix de {name}.', { name })); return null }
-      return { id: `artist-${id}`, kind: 'artist', seed: r.artist?.name || name, picture: r.artist?.picture || picture, artists: [r.artist?.name || name], tracks: r.tracks }
-    } catch (e) { useApp.getState().toast(e.message); return null } finally { setBusy(false) }
+    try { const pl = await api.createArtistMix(id); useApp.getState().libraryChanged(); return pl } catch (e) { useApp.getState().toast(e.message); return null } finally { setBusy(false) }
   }
   const mixOf = { id: `artist-${id}`, kind: 'artist', seed: name, picture }
   return (
     <div className="artist-mix card-surface">
-      <button type="button" className="am-open" onClick={async () => { const mix = await get(); if (mix) useApp.getState().open({ type: 'mix', mix }) }}>
+      <button type="button" className="am-open" disabled={busy} onClick={async () => { const pl = await make(); if (pl) useApp.getState().open({ type: 'playlist', id: pl.id }) }}>
         <span className="am-art"><MixArt mix={mixOf} /></span>
         <span className="text"><span className="title">{t('Mix {name}', { name })}</span><span className="sub">{t('Que ses titres : les connus, ceux de ses albums, et ceux que tu n’as jamais écoutés')}</span></span>
       </button>
-      <button type="button" className="am-play" aria-label={t('Lire le mix')} disabled={busy} onClick={async () => { const mix = await get(); if (mix) playList(mix.tracks, 0, { context: 'mix' }) }}>
+      <button type="button" className="am-play" aria-label={t('Lire le mix')} disabled={busy} onClick={async () => { const pl = await make(); if (pl) playList(pl.tracks, 0, { context: 'mix' }) }}>
         {busy ? <Loader2 size={20} className="spin" /> : <Play size={20} fill="currentColor" strokeWidth={0} style={{ marginLeft: 2 }} />}
       </button>
     </div>
+  )
+}
+
+/** "Tes mixes": the mixes you made, side by side; + puts one in your playlists. */
+function YourMixes() {
+  const [list, setList] = useState(null)
+  const version = useApp(s => s.libraryVersion)
+  const open = useApp(s => s.open)
+  useEffect(() => { api.myMixes().then(setList).catch(() => setList([])) }, [version])
+  if (!list?.length) return null
+  const keep = async (e, pl) => {
+    e.stopPropagation()
+    const next = await api.keepMix(pl.id, !pl.meta?.saved).catch(() => null)
+    if (!next) return
+    setList(list.map(x => (x.id === pl.id ? next : x)))
+    useApp.getState().toast(next.meta?.saved ? t('« {name} » est dans tes playlists.', { name: pl.name }) : t('« {name} » retiré de tes playlists.', { name: pl.name }))
+  }
+  return (
+    <section className="section">
+      <div className="between"><h2 style={{ margin: 0 }}>{t('Tes mixes')}</h2><span className="note" style={{ fontSize: 13 }}>{t('+ : ajouter à tes playlists')}</span></div>
+      <div className="rail" style={{ marginTop: 12 }}>
+        {list.map(pl => (
+          <div key={pl.id} className="mix-card" role="button" tabIndex={0} onClick={() => open({ type: 'playlist', id: pl.id })} onKeyDown={e => { if (e.key === 'Enter') open({ type: 'playlist', id: pl.id }) }}>
+            <div className="art">
+              <Rings seed={pl.id} label={pl.meta?.artist?.name || ''} center={pl.meta?.artist?.picture || (pl.covers || []).find(c => c && !String(c).startsWith('local:')) || null} />
+              <button type="button" className={`keep ${pl.meta?.saved ? 'on' : ''}`} onClick={e => keep(e, pl)} aria-label={pl.meta?.saved ? t('Dans tes playlists') : t('Ajouter à mes playlists')} aria-pressed={!!pl.meta?.saved}>
+                {pl.meta?.saved ? <Check size={16} strokeWidth={2.8} /> : <Plus size={16} strokeWidth={2.8} />}
+              </button>
+            </div>
+            <div className="name">{pl.name.replace(/^Ton mix · /, '')}</div>
+            <div className="who">{pl.meta?.saved ? t('Dans tes playlists') : t('{n} titres', { n: pl.count })}</div>
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -142,6 +173,8 @@ export default function Home() {
           <span className="btn primary small">{t('Créer')}</span>
         </button>
       )}
+
+      {show('custom') && <YourMixes />}
     </div>
   )
 }

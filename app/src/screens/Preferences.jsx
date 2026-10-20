@@ -1,10 +1,11 @@
 // Settings: appearance (theme, icon), sound (equalizer, audio test), download
 // quality and sources, folders, start page, updates.
 import React, { useEffect, useRef, useState } from 'react'
-import { ChevronRight, Check, Loader2, FolderPlus, RotateCcw, GripVertical, Plus, Upload, Info, Bluetooth, Headphones, ArrowUpCircle, ShieldCheck } from 'lucide-react'
+import { ChevronRight, Check, Loader2, FolderPlus, RotateCcw, GripVertical, Plus, Upload, Info, Bluetooth, Headphones, ArrowUpCircle, ShieldCheck, Play, Pause } from 'lucide-react'
 import { api } from '../api'
 import { useApp, DEFAULT_PREFS } from '../store'
-import { applyEqualizer, usePlayer } from '../player'
+import { applyEqualizer, usePlayer, playList } from '../player'
+import { Cover } from '../components/Track'
 import { engine, BANDS } from '../engine'
 import Back from '../components/Back'
 import { pickFolder, setLauncherIcon, pinShortcut, installApk, appInfo, isNative, EchoNative, dynamicColors } from '../native'
@@ -63,6 +64,27 @@ async function showAbout() {
   })
 }
 
+const ERA_STEPS = [3, 6, 9, 12, 18, 24, 36, 48, 60]
+const monthsLabel = m => (m % 12 === 0 ? (m === 12 ? t('1 an') : t('{n} ans', { n: m / 12 })) : t('{n} mois', { n: m }))
+
+/** How recent "Récentes" is in the daily mixes (and so where "Anciennes" starts). */
+function EraRow({ settings, onSaved }) {
+  const saved = settings?.mix_recent_months || 12
+  const [step, setStep] = useState(null)
+  const index = step ?? Math.max(0, ERA_STEPS.findIndex(m => m >= saved))
+  const months = ERA_STEPS[index]
+  const commit = async () => { if (step === null) return; const r = await api.saveSettings({ mix_recent_months: ERA_STEPS[step] }).catch(() => null); if (r) onSaved(r); setStep(null) }
+  return (
+    <div className="era-row">
+      <div className="between"><span>{t('Récentes ou anciennes')}</span><b className="accent">{monthsLabel(months)}</b></div>
+      <p className="note" style={{ margin: '4px 0 0', fontSize: 13 }}>{t('Dans les mixes du jour, « Récentes » = sorties depuis moins de {d}, « Anciennes » = avant.', { d: monthsLabel(months) })}</p>
+      <input type="range" className="wide-range" min="0" max={ERA_STEPS.length - 1} step="1" value={index} aria-label={t('Récentes ou anciennes')}
+        onChange={e => setStep(Number(e.target.value))} onPointerUp={commit} onTouchEnd={commit} onKeyUp={commit} />
+      <div className="era-scale"><span>{t('3 mois')}</span><span>{t('1 an')}</span><span>{t('2 ans')}</span><span>{t('5 ans')}</span></div>
+    </div>
+  )
+}
+
 export function SettingsHome() {
   const open = useApp(s => s.open)
   const prefs = useApp(s => s.prefs)
@@ -99,6 +121,7 @@ export function SettingsHome() {
       <div className="set-card">
         <Row label={t('Qualité de téléchargement')} value={tier ? tier.name.split(' · ')[0] : ''} onClick={() => open({ type: 'quality' })} />
         <Row label={t('Sources')} value={active.length ? active.slice(0, 2).join(', ') + (active.length > 2 ? '…' : '') : t('Aucune')} accent={!active.length} onClick={() => open({ type: 'sources' })} />
+        <EraRow settings={settings} onSaved={setSettings} />
         <Row label={t('Dossier des téléchargements')} value={folder || '…'} onClick={() => open({ type: 'sources', focus: 'folder' })} />
         <Row label={t('Page de démarrage')} value={t(start)} onClick={() => open({ type: 'start' })} />
       </div>
@@ -216,6 +239,53 @@ export function ThemeScreen({ focus }) {
 }
 
 // --------------------------------------------------------------- equalizer
+/**
+ * A song of yours to set the equalizer by ear, and "Sans / Avec" to hear the
+ * difference while it plays (only for listening: your setting doesn't change).
+ */
+function EqTestSong({ eq }) {
+  const [song, setSong] = useState(null)
+  const [bypass, setBypass] = useState(false)
+  const playing = usePlayer(s => s.playing && s.queue[s.index]?.local_id === song?.local_id)
+  useEffect(() => {
+    let saved = null
+    try { saved = JSON.parse(localStorage.getItem('echo-eq-song') || 'null') } catch {}
+    if (saved?.local_id) { setSong(saved); return }
+    api.tracks({ sort: 'played', limit: 1 }).then(r => { if (r[0]) setSong({ ...r[0], local_id: r[0].id }) }).catch(() => {})
+  }, [])
+  // Leaving the screen: your setting is back.
+  useEffect(() => () => applyEqualizer(useApp.getState().prefs.eq), [])
+  useEffect(() => { applyEqualizer(bypass ? { ...eq, enabled: false } : eq) }, [bypass, eq.enabled, eq.preamp, eq.bands.join()])
+  const choose = async () => {
+    const rows = await api.tracks({ sort: 'played', limit: 40 }).catch(() => [])
+    useApp.getState().showSheet({
+      title: t('Titre pour tester'),
+      subtitle: t('Un titre que tu connais bien, sur ton téléphone'),
+      items: rows.map(r => ({ label: `${r.title} · ${r.artist}`, checked: song?.local_id === r.id, onSelect: () => { const s2 = { ...r, local_id: r.id }; setSong(s2); try { localStorage.setItem('echo-eq-song', JSON.stringify({ local_id: r.id, id: r.id, title: r.title, artist: r.artist, has_art: r.has_art, codec: r.codec })) } catch {} } })),
+    })
+  }
+  const toggle = () => (playing ? (engine.pause(), usePlayer.setState({ playing: false })) : playList([song], 0, { context: 'search' }))
+  if (!song) return <div className="set-card pad eq-test"><p className="note" style={{ margin: 0 }}>{t('Télécharge un titre pour pouvoir tester l’égaliseur avec ta musique.')}</p></div>
+  return (
+    <div className="set-card pad eq-test">
+      <div className="eq-test-h">{t('Titre pour tester')}</div>
+      <div className="eq-test-song">
+        <Cover song={song} />
+        <span className="text"><span className="title">{song.title}</span><span className="sub">{[song.artist, song.codec ? String(song.codec).toUpperCase() : null].filter(Boolean).join(' · ')}</span></span>
+        <button type="button" className="btn quiet small" onClick={choose}>{t('Changer')}</button>
+      </div>
+      <div className="eq-test-ab">
+        <button type="button" className="eq-play" onClick={toggle} aria-label={playing ? t('Pause') : t('Lire')}>{playing ? <Pause size={18} fill="currentColor" strokeWidth={0} /> : <Play size={18} fill="currentColor" strokeWidth={0} style={{ marginLeft: 2 }} />}</button>
+        <div className="tabs2" role="group" aria-label={t('Comparer')} style={{ marginTop: 0, flex: 1 }}>
+          <button type="button" aria-selected={bypass} onClick={() => setBypass(true)}>{t('Sans égaliseur')}</button>
+          <button type="button" aria-selected={!bypass} onClick={() => setBypass(false)} disabled={!eq.enabled}>{t('Avec')}</button>
+        </div>
+      </div>
+      <p className="note" style={{ margin: '10px 0 0', fontSize: 12.5 }}>{eq.enabled ? t('Touche « Sans » et « Avec » pendant la lecture pour entendre la différence.') : t('Active l’égaliseur pour comparer.')}</p>
+    </div>
+  )
+}
+
 export function EqualizerScreen() {
   const prefs = useApp(s => s.prefs)
   const setPrefs = useApp(s => s.setPrefs)
@@ -230,7 +300,8 @@ export function EqualizerScreen() {
         <h1>{t('Égaliseur')}</h1>
         <button type="button" role="switch" aria-checked={!!eq.enabled} aria-label={t('Activer l’égaliseur')} className={`switch ${eq.enabled ? 'on' : ''}`} onClick={() => save({ enabled: !eq.enabled })}><i /></button>
       </div>
-      <div className="segments" role="radiogroup" aria-label={t('Préréglages')}>
+      <EqTestSong eq={eq} />
+      <div className="segments" role="radiogroup" aria-label={t('Préréglages')} style={{ marginTop: 16 }}>
         {Object.entries(EQ_PRESETS).map(([id, p]) => <button key={id} type="button" aria-pressed={eq.preset === id} onClick={() => pickPreset(id)}>{t(p.name)}</button>)}
       </div>
       <div className={`eq ${eq.enabled ? '' : 'off'}`}>

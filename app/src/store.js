@@ -66,8 +66,9 @@ export const useApp = create((set, get) => ({
 
   toast: (message, action = null) => {
     const id = ++toastSeq
-    set(s => ({ toasts: [...s.toasts.slice(-2), { id, message, action }] }))
-    setTimeout(() => set(s => ({ toasts: s.toasts.filter(x => x.id !== id) })), action ? 4000 : 2200)
+    // One message at a time, briefly (a little longer with a button to touch).
+    set({ toasts: [{ id, message, action }] })
+    setTimeout(() => set(s => ({ toasts: s.toasts.filter(x => x.id !== id) })), action ? 2800 : 1600)
   },
   dismissToast: id => set(s => ({ toasts: s.toasts.filter(x => x.id !== id) })),
 

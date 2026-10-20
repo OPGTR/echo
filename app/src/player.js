@@ -4,13 +4,16 @@
 // downloaded while this one plays, so the music keeps going; a song picked
 // from a search is downloaded alone.
 import { create } from 'zustand'
-import { api, streamUrl, artUrl } from './api'
+import { api, streamUrl, artUrl, playUrl } from './api'
 import { useApp, pokeDownloads } from './store'
 import { engine, onEngine } from './engine'
 import { lanAddress, requestNotifications } from './native'
 import { t } from './i18n'
 
 export const keyOf = s => (s.local_id ? `l:${s.local_id}` : `d:${s.deezer_id}`)
+/** The id the phone's player knows a song by. */
+const engineId = s => (s.local_id ? s.local_id : `d:${s.deezer_id}`)
+const isEngineId = (s, id) => !!s && (s.local_id === id || (s.deezer_id && `d:${s.deezer_id}` === id))
 // Catalogue songs carry Deezer's cover; library songs their own art, when they have some.
 export const coverOf = s => s?.cover || (s?.local_id && s.has_art !== 0 && s.has_art !== false ? artUrl(s.local_id) : s?.cover_small || null)
 
@@ -81,11 +84,13 @@ onEngine(e => {
     // The native player moved on to the song that was waiting.
     flushListen()
     const s = get()
-    const at = s.queue.findIndex((x, i) => i > s.index && x.local_id === e.id)
+    const at = s.queue.findIndex((x, i) => i > s.index && isEngineId(x, e.id))
     const index = at >= 0 ? at : s.index + 1
     const song = s.queue[index]
-    set({ index, loading: false, position: 0, duration: song?.duration || 0 })
+    ++generation
+    set({ index, loading: false, failed: null, position: 0, duration: song?.duration || 0 })
     if (song?.local_id) { listened = { id: song.local_id, seconds: 0, last: 0 }; loadDetails(song.local_id) }
+    else if (song?.deezer_id) adopt(song)
     afterStart()
   } else if (e.type === 'remote') {
     if (e.action === 'next') next()
@@ -94,14 +99,13 @@ onEngine(e => {
       // Picked on the car screen (or moved on by the player itself): it plays already.
       flushListen()
       const s = get()
-      const after = s.queue.findIndex((x, i) => i > s.index && x.local_id === e.id)
-      const index = after >= 0 ? after : s.queue.findIndex(x => x.local_id === e.id)
+      const after = s.queue.findIndex((x, i) => i > s.index && isEngineId(x, e.id))
+      const index = after >= 0 ? after : s.queue.findIndex(x => isEngineId(x, e.id))
       if (index < 0) return
       ++generation
       const song = s.queue[index]
       set({ index, playing: true, loading: false, failed: null, position: 0, duration: song.duration || 0 })
-      listened = { id: song.local_id, seconds: 0, last: 0 }
-      loadDetails(song.local_id)
+      if (song.local_id) { listened = { id: song.local_id, seconds: 0, last: 0 }; loadDetails(song.local_id) } else adopt(song)
       afterStart()
     }
   } else if (e.type === 'error') {
@@ -180,8 +184,29 @@ async function loadDetails(id) {
   } catch { return null }
 }
 
-/** What the engine plays for a song of yours. */
-async function itemFor(song) {
+/** A song the phone's player fetched itself (downloaded meanwhile): it's yours now. */
+async function adopt(song) {
+  const job = await api.waitDownload(song.deezer_id, 120000).catch(() => null)
+  if (job?.status === 'done' && job.track_id) {
+    markLocal(keyOf(song), job.track_id)
+    if (current() && current().local_id === job.track_id) { listened = { id: job.track_id, seconds: 0, last: 0 }; loadDetails(job.track_id) }
+    pokeDownloads()
+  }
+}
+
+/**
+ * What the engine plays for a song. Yours: from the library. From the
+ * catalogue: an address that downloads it first, so the phone's player can
+ * go on by itself (screen locked) without waiting for the app.
+ */
+async function itemFor(song, { remote = false } = {}) {
+  if (!song?.local_id && remote && song?.deezer_id && !get().cast.base) {
+    return {
+      id: engineId(song), url: playUrl(song), castUrl: null, mime: null,
+      title: song.title || '', artist: song.artist || '', album: song.album || '',
+      artwork: coverOf(song), castArtwork: song.cover || null, duration: song.duration || 0,
+    }
+  }
   if (!song?.local_id) return null
   const tr = get().details[song.local_id] || await loadDetails(song.local_id)
   const base = get().cast.base
@@ -199,12 +224,24 @@ async function itemFor(song) {
   }
 }
 
-/** The song after this one, when it's on the phone: it follows without a gap. */
+/**
+ * The songs after this one, handed to the phone's player (up to 8): they
+ * follow each other without the app, songs to download included (each is
+ * fetched when its turn comes near). A song picked from a search stays alone.
+ */
 async function queueNextInEngine() {
   const s = get()
-  if (s.index < 0 || s.repeat === 'one') return
-  const following = s.repeat === 'all' && s.index + 1 >= s.queue.length ? s.queue[0] : s.queue[s.index + 1]
-  engine.setNext(following?.local_id ? await itemFor(following) : null)
+  if (s.index < 0 || s.repeat === 'one') { engine.setUpcoming([]); return }
+  const after = s.queue.slice(s.index + 1)
+  const ahead = (s.repeat === 'all' ? [...after, ...s.queue.slice(0, s.index + 1)] : after).slice(0, 8)
+  const remote = s.context !== 'search' && !!useApp.getState().source?.installed
+  const items = []
+  for (const song of ahead) {
+    const item = await itemFor(song, { remote })
+    if (!item) break // the order matters: stop at a song that can't be got
+    items.push(item)
+  }
+  engine.setUpcoming(items)
 }
 
 /** The songs coming next that are on the phone: what a car screen lists. */

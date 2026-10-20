@@ -4,7 +4,7 @@
 //   ◔ arc     downloading
 //   ◎ pulse   playing now
 import React from 'react'
-import { MoreVertical, Music2, Play, ListPlus, ListEnd, Download, User, Disc3, Trash2, Heart, ListMusic, Plus, MinusCircle, ThumbsDown, Check } from 'lucide-react'
+import { MoreVertical, Music2, Play, ListPlus, ListEnd, Download, User, Disc3, Trash2, Heart, ListMusic, Plus, MinusCircle, ThumbsDown, Check, Disc } from 'lucide-react'
 import { useApp } from '../store'
 import { usePlayer, keyOf, coverOf, playNext, addToQueue, toggleLike, playList } from '../player'
 import { api } from '../api'
@@ -55,13 +55,31 @@ export function songMenu(song, { playlistId = null, onChanged = null } = {}) {
     const liked = usePlayer.getState().liked[song.local_id] ?? !!song.liked
     items.push({ label: liked ? t('Retirer des titres aimés') : t('Ajouter aux titres aimés'), icon: Heart, onSelect: () => toggleLike(song.local_id) })
   }
-  items.push({ label: t('Je n’aime pas ce titre'), detail: t('Il ne te sera plus proposé'), icon: ThumbsDown, accent: true, onSelect: () => dislikeSong(song) })
+  if (song.artist) items.push({ label: t('Créer un mix de cet artiste'), detail: t('Que des titres de {name}', { name: mainArtistOf(song) }), icon: Disc, accent: true, onSelect: () => createArtistMix(song) })
+  items.push({ label: t('Je n’aime pas ce titre'), detail: t('Il ne te sera plus proposé'), icon: ThumbsDown, onSelect: () => dislikeSong(song) })
   if (!song.local_id && song.deezer_id) items.push({ label: t('Télécharger'), icon: Download, onSelect: () => downloadSongs([song]) })
   if (song.artist) items.push({ label: t('Aller à l’artiste'), icon: User, onSelect: () => goToArtist(song) })
   if (song.album_id) items.push({ label: t('Aller à l’album'), icon: Disc3, onSelect: () => app.open({ type: 'catalogue-album', id: song.album_id }) })
   else if (song.local_id && song.album) items.push({ label: t('Aller à l’album'), icon: Disc3, onSelect: () => app.open({ type: 'album', album: song.album, artist: song.album_artist || song.artist }) })
   if (song.local_id) items.push({ label: t('Supprimer du téléphone'), icon: Trash2, danger: true, onSelect: async () => { const r = await api.remove(song.local_id).catch(e => ({ error: e.message })); if (r?.error) app.toast(r.error); app.libraryChanged() } })
   app.showSheet({ title: song.title, subtitle: song.artist, items })
+}
+
+const mainArtistOf = song => String(song.artist || '').split(/\s*(?:,|&|;|\/|\bfeat\.?|\bft\.?)\s*/i)[0]
+
+/** "Créer un mix de cet artiste": only their songs, kept in "Tes mixes" (Pour toi). */
+export async function createArtistMix(song) {
+  const app = useApp.getState()
+  const name = mainArtistOf(song)
+  app.toast(t('Création du mix {name}…', { name }))
+  try {
+    let id = song.artist_id
+    if (!id) { const found = await api.findArtist(name); id = found?.id }
+    if (!id) throw new Error(t('Artiste introuvable dans le catalogue.'))
+    const pl = await api.createArtistMix(id)
+    app.libraryChanged()
+    app.open({ type: 'playlist', id: pl.id })
+  } catch (e) { app.toast(e.message) }
 }
 
 /** "Je n'aime pas ce titre": never proposed again (mixes, Pour toi). */
@@ -208,6 +226,7 @@ export function selectionMenu() {
     app.toast(plural(n, '1 titre ne te sera plus proposé.', '{n} titres ne te seront plus proposés.'), { label: t('Annuler'), run: () => songs.forEach(s => api.undislike(s).catch(() => {})) })
     done()
   } })
+  if (sameArtist) items.push({ label: t('Créer un mix de cet artiste'), detail: t('Que des titres de {name}', { name: mainArtistOf(songs[0]) }), icon: Disc, onSelect: () => { done(); createArtistMix(songs[0]) } })
   if (sameArtist) items.push({ label: t('Aller à l’artiste'), icon: User, onSelect: () => { done(); goToArtist(songs[0]) } })
   if (sameAlbum && songs[0].local_id) items.push({ label: t('Aller à l’album'), icon: Disc3, onSelect: () => { done(); app.open({ type: 'album', album: songs[0].album, artist: songs[0].album_artist || songs[0].artist }) } })
   if (local.length) items.push({ label: t('Supprimer du téléphone'), icon: Trash2, danger: true, detail: plural(local.length, '1 titre', '{n} titres'), onSelect: async () => {
