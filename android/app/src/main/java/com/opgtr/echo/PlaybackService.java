@@ -25,6 +25,8 @@ import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.datasource.DefaultDataSource;
+import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.extractor.DefaultExtractorsFactory;
 import androidx.media3.session.LibraryResult;
@@ -120,8 +122,14 @@ public class PlaybackService extends MediaLibraryService {
         DefaultExtractorsFactory extractors = new DefaultExtractorsFactory()
             .setConstantBitrateSeekingEnabled(true)
             .setConstantBitrateSeekingAlwaysEnabled(true);
+        // A song still downloading answers once it's ready (up to minutes):
+        // the player waits for it instead of giving up after 8 seconds.
+        DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(15000)
+            .setReadTimeoutMs(6 * 60 * 1000)
+            .setAllowCrossProtocolRedirects(true);
         exo = new ExoPlayer.Builder(this)
-            .setMediaSourceFactory(new DefaultMediaSourceFactory(this, extractors))
+            .setMediaSourceFactory(new DefaultMediaSourceFactory(new DefaultDataSource.Factory(this, http), extractors))
             .setAudioAttributes(new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -259,6 +267,7 @@ public class PlaybackService extends MediaLibraryService {
                 if (active == null) return;
                 while (active.getCurrentMediaItemIndex() > 0) active.removeMediaItem(0);
                 while (items.size() > 1 && !id.equals(items.get(0).id)) items.remove(0);
+                // The queue here is running low: the app adds more when it can.
             });
             emit("advanced", json("id", id));
         }
@@ -282,6 +291,23 @@ public class PlaybackService extends MediaLibraryService {
         active.setMediaItems(list, 0, Math.max(0, positionMs));
         active.prepare();
         active.setPlayWhenReady(play);
+    }
+
+    /**
+     * The songs after the current one (the app's queue, several ahead, those
+     * still to download included): they follow each other here, even when
+     * the app sleeps with the screen locked.
+     */
+    void setUpcoming(List<Item> next) {
+        boolean cast = active == castPlayer && castPlayer != null;
+        while (items.size() > 1) items.remove(items.size() - 1);
+        int count = active.getMediaItemCount();
+        int index = active.getCurrentMediaItemIndex();
+        if (count > index + 1) active.removeMediaItems(index + 1, count);
+        if (items.isEmpty() || next == null) return;
+        List<MediaItem> list = new ArrayList<>();
+        for (Item i : next) { items.add(i); list.add(i.toMediaItem(cast)); }
+        active.addMediaItems(list);
     }
 
     /** The song after the current one changed (or is now on the phone). */
