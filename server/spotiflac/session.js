@@ -12,6 +12,20 @@ function signedHeaders(config, record, method, url, body, now = Date.now(), nonc
   const canonical = [config.schemeLabel || 'SPOTIFLAC-HMAC-V1', method.toUpperCase(), new URL(url).pathname, '', hash, timestamp, nonce, record.session_id, config.appVersion || 'ext-1.0', config.platform || 'extension'].join('\n')
   return Object.fromEntries(Object.entries({ Session: record.session_id, Timestamp: timestamp, Nonce: nonce, 'Body-SHA256': hash, Signature: hmac(rolling, canonical), 'App-Version': config.appVersion || 'ext-1.0', Platform: config.platform || 'extension' }).map(([key,value]) => [prefix + key,value]))
 }
+// What an extension gets back from session.signedFetch, field for field as
+// Mornye gives it. Tidal reads "retryMode" to know whether to keep its ticket
+// and wait ("poll_existing"), take a new one, or stop, and "retryAfterSeconds"
+// for how long: without them it asked for a new ticket every few seconds,
+// and the gateway answered by asking for a new verification.
+function answer(response, contract = {}) {
+  const text = key => String(contract[key] ?? '').trim()
+  const header = Number(String(response.headers?.['retry-after'] ?? '').trim())
+  const result = { ...response, retryAfterSeconds: header > 0 ? Math.round(header) : Math.max(0, Number(contract.retry_after_seconds) || 0) }
+  if (text('code') || text('origin') || text('action')) {
+    Object.assign(result, { error: text('error'), code: text('code').toUpperCase(), origin: text('origin').toLowerCase(), action: text('action').toLowerCase(), retryable: contract.retryable === true, retryMode: text('retry_mode').toLowerCase() })
+  }
+  return result
+}
 class SignedSession {
   constructor(config, storage, network, owner) {
     this.config = config; this.storage = storage; this.network = network; this.owner = owner
@@ -147,9 +161,9 @@ class SignedSession {
           if (!await this.bootstrap(signal)) return this.verification()
           record = this.record(); continue
         }
-        return { ...response, ...(code ? { error_code: code, error_origin: contract.origin, error_action: contract.action, retry_after_seconds: contract.retry_after_seconds || 0 } : {}) }
+        return answer(response, contract)
       }
     } catch (error) { return { ok: false, error: error.message } }
   }
 }
-module.exports = { SignedSession, signedHeaders }
+module.exports = { SignedSession, signedHeaders, answer }

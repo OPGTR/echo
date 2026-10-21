@@ -236,6 +236,15 @@ try {
     const notes = readNotes('Intro\n\n## Nouveautés dans 0.2.0\n\n### Améliorations\n- Un [lien](https://x) et **gras**\n### Corrections\n- Bug\n\n---\n- Quel fichier')
     ok('release notes read as sections', notes.length === 2 && notes[0].title === 'Améliorations' && notes[0].items[0] === 'Un lien et gras' && notes[1].items.length === 1, JSON.stringify(notes))
   }
+  {
+    // 0.3.5: signed answers read like Mornye's (Tidal keeps its ticket and waits).
+    const { createRequire } = await import('node:module')
+    const { answer } = createRequire(import.meta.url)('../server/spotiflac/session.js')
+    const a = answer({ status: 409, ok: false, headers: {}, body: '' }, { error: 'preparing', code: 'operation_pending', origin: 'Provider', retryable: true, retry_mode: 'poll_existing', retry_after_seconds: 2 })
+    ok('0.3.5: gateway answers carry retryMode/retryAfterSeconds like Mornye', a.retryMode === 'poll_existing' && a.retryAfterSeconds === 2 && a.code === 'OPERATION_PENDING' && a.retryable === true && a.error === 'preparing' && a.origin === 'provider', JSON.stringify(a))
+    const plain = answer({ status: 200, ok: true, headers: { 'retry-after': '5' }, body: '{}' }, {})
+    ok('0.3.5: a plain answer has no error fields', plain.error === undefined && plain.retryAfterSeconds === 5)
+  }
   // -------------------------------------------------- 0.3
   const mixesBefore = await api('/playlists')
   ok('a mix stays out of your playlists until you add it', !mixesBefore.some(p => p.kind === 'mix'), mixesBefore.map(p => p.kind).join())
