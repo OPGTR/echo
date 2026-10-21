@@ -176,6 +176,7 @@ try {
   const [chainJob] = await api('/downloads', { items: [{ deezer_id: '666123', title: 'Song 666123', artist: 'Daft Punk' }] })
   const chainDone = await waitJob(chainJob.id)
   ok('a song Deezer lacks comes from the next source (matched by title/artist)', chainDone?.status === 'done' && /Tidal/.test(chainDone.message || ''), `${chainDone?.status} ${chainDone?.message} ${chainDone?.error || ''}`)
+  ok('0.3.3: why Deezer failed stays readable after Tidal took over', chainDone?.status === 'done' && /^Deezer : /.test(chainDone.error || ''), chainDone?.error)
   const [both] = await api('/downloads', { items: [{ deezer_id: '666999', title: 'Song 666999', artist: 'Daft Punk' }] })
   const bothFail = await waitJob(both.id)
   ok('no source has it: one clear error naming each source', bothFail?.status === 'error' && /Deezer/.test(bothFail.error) && /Tidal/.test(bothFail.error), bothFail?.error)

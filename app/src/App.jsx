@@ -82,6 +82,8 @@ export default function App() {
       setPhase(settings.onboarded ? 'ready' : 'onboarding')
       // In the background: new releases of artists you follow, a new version of Écho.
       useApp.getState().refreshFollows()
+      // A source whose check expired is checked again, quietly.
+      api.checkSources().then(() => useApp.getState().refreshSource()).catch(() => {})
       appInfo().then(async info => {
         useApp.setState({ appBuild: Number(info.build) || 0 })
         try { useApp.setState({ update: await api.update(Number(info.build) || 0) }) } catch {}

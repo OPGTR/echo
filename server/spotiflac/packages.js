@@ -13,7 +13,7 @@ const { ExtensionRuntime } = require('./runtime')
 // Mornye's extension store (SpotiFLAC's, renamed in October 2026; same .sflx format).
 const REGISTRY = 'https://raw.githubusercontent.com/mornyeapp/Mornye-Extension/main/registry.json'
 const OLD_REGISTRIES = ['https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json']
-const COMPAT_VERSION = '5.1.0'
+const COMPAT_VERSION = '5.2.1'
 const FEATURES = { signedSession: 3, sessionRefresh: 1, sessionGrant: 1, globalAction: 1, webviewAuth: 1, downloadSegments: 1, patternedFileTransform: 1, preparedContext: 1, accountForms: 1, accountDownloadMode: 1, directMedia: 1 }
 const hash = value => crypto.createHash('sha256').update(String(value)).digest('hex')
 const keyOf = name => crypto.createHash('sha1').update(`spotiflac:${name}`).digest('hex').slice(0,10)

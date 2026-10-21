@@ -25,7 +25,7 @@ function validateURL(raw, permissions) {
 }
 class ExtensionNetwork {
   constructor(permissions) { this.permissions = permissions; this.cookies = new CookieJar() }
-  async request(raw, { method = 'GET', body, headers = {}, signal, directMedia = false } = {}) {
+  async request(raw, { method = 'GET', body, headers = {}, signal, directMedia = false, stallMs = 30000 } = {}) {
     let url = validateURL(raw, this.permissions)
     headers = Object.fromEntries(Object.entries(headers).filter(([k]) => !/^(host|content-length|connection|transfer-encoding|proxy-authorization)$/i.test(k)).map(([k,v]) => [k, String(v)]))
     for (let hop = 0; hop <= 5; hop++) {
@@ -43,7 +43,7 @@ class ExtensionNetwork {
           lookup: (_host, options, cb) => options?.all ? cb(null, addresses) : cb(null, addresses[0].address, addresses[0].family),
         }, resolve)
         req.on('error', reject)
-        req.setTimeout(30000, () => req.destroy(new Error('Addon network request stalled')))
+        req.setTimeout(stallMs, () => req.destroy(new Error('Addon network request stalled')))
         if (body && method !== 'GET' && method !== 'HEAD') req.write(body)
         req.end()
       })

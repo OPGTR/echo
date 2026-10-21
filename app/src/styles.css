@@ -668,6 +668,9 @@ img { display: block; }
 .dl .state-line { display: block; font-size: 12.5px; margin-top: 4px; color: var(--faint); overflow-wrap: anywhere; }
 .dl .state-line.on { color: var(--sodium); }
 .dl .state-line.err { color: var(--danger); }
+/* Why a source failed before another took over (or before giving up). */
+.dl .fails { display: block; font-size: 12px; line-height: 1.4; margin-top: 3px; color: var(--faint); white-space: pre-line; overflow-wrap: anywhere; }
+.dl .fails.err { color: var(--danger); }
 .bar-track.thin { height: 4px; margin-top: 6px; display: block; }
 /* update */
 .update-page { display: flex; flex-direction: column; }

@@ -247,6 +247,27 @@ async function fromSource(source, j, meta, signal, onProgress) {
   throw lastError || new Error('download failed')
 }
 
+/** Why a source failed, in words; the original message stays in brackets. */
+function reason(message) {
+  const raw = String(message || '').slice(0, 160)
+  const known = [
+    [/stalled|timed? ?out|ETIMEDOUT|ESOCKETTIMEDOUT/i, 'le serveur ne répond plus'],
+    [/ECONNRESET|socket hang up|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|network/i, 'connexion coupée'],
+    [/HTTP (4\d\d)/i, m => `refusé par le serveur (HTTP ${m[1]})`],
+    [/HTTP (5\d\d)/i, m => `serveur en panne (HTTP ${m[1]})`],
+    [/permission denied for (\S+)/i, m => `adresse non autorisée (${m[1]})`],
+    [/VERIFY_REQUIRED|verification|captcha/i, 'vérification demandée'],
+    [/introuvable|not found|no .*match/i, 'titre introuvable'],
+    [/Incomplete/i, 'fichier incomplet'],
+  ]
+  for (const [test, say] of known) {
+    const m = raw.match(test)
+    if (m) return `${typeof say === 'function' ? say(m) : say} (${raw})`
+  }
+  return raw
+}
+const failures = errors => errors.map(e => `${e.source} : ${reason(e.message)}`).join('\n')
+
 async function run(j, signal) {
   const chain = sources.downloadChain()
   if (!chain.length) throw new Error('NO_SOURCE')
@@ -271,7 +292,7 @@ async function run(j, signal) {
   let via = null
   const errors = []
   for (const source of chain) {
-    if (errors.length) update(j.id, { message: `try:${source.name}`, progress: 0 })
+    if (errors.length) update(j.id, { message: `try:${source.name}`, progress: 0, error: failures(errors) })
     try {
       artifact = await fromSource(source, j, meta, signal, u => { if (!signal.aborted && typeof u?.percent === 'number') update(j.id, { progress: Math.max(0, Math.min(99, u.percent)) }) })
       via = source
@@ -283,7 +304,7 @@ async function run(j, signal) {
     }
   }
   if (!artifact) {
-    const err = new Error(errors.map(e => `${e.source} : ${e.message}`).join(' · '))
+    const err = new Error(failures(errors))
     err.needsVerification = errors.length > 0 && errors.every(e => e.verify)
     err.verifySource = errors.find(e => e.verify)?.id || null
     throw err
@@ -306,7 +327,8 @@ async function run(j, signal) {
     const name = `${meta.track_no ? String(meta.track_no).padStart(2, '0') + ' ' : ''}${safeName(meta.title, 'Titre')}${ext}`
     const saved = await saveInto(work, path.join(safeName(meta.album_artist, 'Artiste'), albumDir, name))
     const { id } = await library.indexFile(saved, { deezerId: j.deezer_id })
-    update(j.id, { status: 'done', progress: 100, track_id: id, message: `via:${via.name}`, error: null })
+    // The sources that failed before stay readable: that's how we learn why.
+    update(j.id, { status: 'done', progress: 100, track_id: id, message: `via:${via.name}`, error: errors.length ? failures(errors) : null })
     // Heard in a mix: on the phone for 48 h, unless you keep it (like, playlist).
     if (job(j.id)?.origin === 'mix') getDB().prepare('INSERT OR IGNORE INTO temporary (track_id, until) VALUES (?, ?)').run(id, now() + TEMP_HOURS * 3600000)
     return id

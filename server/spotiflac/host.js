@@ -59,6 +59,12 @@ class ExtensionHost {
     fs.mkdirSync(root, { recursive: true, mode: 0o700 })
   }
   abort() { this.controller.abort() }
+  // The bar shows the furthest of what the addon says and what has really
+  // arrived: some addons (Deezer) say 5 % and then download the whole file
+  // without a word, as Mornye counts the bytes itself.
+  addonProgress(percent) { this.addonPercent = Math.max(0, Math.min(100, Number(percent) || 0)); this.reportProgress() }
+  transferProgress(fraction) { const next = Math.floor(Math.max(0, Math.min(1, fraction)) * 90); if (next > (this.bytePercent || 0)) { this.bytePercent = next; this.reportProgress() } }
+  reportProgress() { const percent = Math.max(this.addonPercent || 0, this.bytePercent || 0); if (percent !== this.shownPercent) { this.shownPercent = percent; this.onProgress?.({ percent }) } }
   file(raw) { if (!this.addon.manifest.permissions.file) throw new Error('File permission denied'); return safePath(this.root, raw, this.grants) }
   async transfer(url, destination, options = {}, onProgress = async () => {}, { segment = false } = {}) {
     options = { ...this.addon.manifest.capabilities?.downloadTransfer, ...options }
@@ -81,7 +87,7 @@ class ExtensionHost {
       if (offset) { headers.Range = `bytes=${offset}-`; headers['If-Range'] = validator }
       let response, output
       try {
-        const result = await this.network.request(url, { headers, signal: this.signal, directMedia: !!options.directMedia })
+        const result = await this.network.request(url, { headers, signal: this.signal, directMedia: !!options.directMedia, stallMs: 60000 }) // like Mornye: a file server may take a while to start
         response = result.response
         if (result.status < 200 || result.status >= 300) { const error = new Error(`Download returned HTTP ${result.status}`); error.status = result.status; throw error }
         const range = String(result.headers['content-range'] || '').match(/^bytes (\d+)-(\d+)\/(\d+)$/)
@@ -104,6 +110,7 @@ class ExtensionHost {
           written += chunk.length
           if (written > 4 * 1024 ** 3) throw new Error('Addon audio exceeds the file size limit')
           live?.({ part, file, total, written })
+          if (!segment && total) this.transferProgress(written / total)
           await onProgress(written, total)
         }
         if (!written || total && written !== total) throw new Error('Incomplete addon audio download')
@@ -138,7 +145,7 @@ class ExtensionHost {
           const settled = await Promise.allSettled(indices.map(async index => {
             const segment = segments[index], url = typeof segment === 'string' ? segment : segment?.url
             await this.transfer(url, path.join(dir, String(index)), { ...options, headers: { ...options.headers, ...segment?.headers } }, async written => { progress.set(index, written); await report() }, { segment: true })
-            completed++; await report()
+            completed++; this.transferProgress(completed / segments.length); await report()
           }))
           const failure = settled.find(result => result.status === 'rejected')
           if (failure) throw failure.reason
@@ -295,7 +302,7 @@ class ExtensionHost {
         await fsp.mkdir(path.dirname(output),{recursive:true});await runTool(this.tools.ffmpeg,[...argv,output],this.signal);return {success:true,path:args[1]}
       }catch(error){return {success:false,error:error.message}}
     }
-    if(method==='progress'){this.onProgress?.({percent:args[0]});return true}
+    if(method==='progress'){this.addonProgress(args[0]);return true}
     if(method==='log')return true // Guest logs never expose account tokens to application logs.
     if(method==='encode')return {__bytes:[...Buffer.from(args[0])]}
     if(method==='decode')return Buffer.from(args[0]).toString()
@@ -326,8 +333,8 @@ class ExtensionHost {
     }
     if(name==='utils'){
       if(action==='isDownloadCancelled'||action==='isRequestCancelled')return this.signal.aborted
-      if(action==='appVersion')return '5.1.0'
-      if(action==='appUserAgent')return `Echo/${require('../version').version} Mornye-compatible/5.1.0`
+      if(action==='appVersion')return '5.2.1'
+      if(action==='appUserAgent')return `Echo/${require('../version').version} Mornye-compatible/5.2.1`
       if(action==='randomUserAgent')return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36'
       if(action==='setDownloadStatus'){this.onProgress?.({message:String(args[0]).slice(0,200)});return true}
       if(action==='getResolutionRemainingMs')return Math.max(0,60000-(Date.now()-this.startedAt))

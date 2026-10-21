@@ -32,7 +32,8 @@ export function Downloads() {
               <span className="text">
                 <span className="title wrap2">{d.title || d.deezer_id}</span>
                 {d.artist && <span className="sub wrap2">{d.artist}</span>}
-                <span className={`state-line ${d.status === 'error' ? 'err' : active ? 'on' : ''}`}>{d.status === 'error' ? `${label(d)} : ${d.error}` : label(d)}</span>
+                <span className={`state-line ${d.status === 'error' ? 'err' : active ? 'on' : ''}`}>{label(d)}</span>
+                {d.error && d.status !== 'cancelled' && <span className={`fails ${d.status === 'error' ? 'err' : ''}`}>{d.error}</span>}
                 {d.status === 'downloading' && <span className="bar-track thin"><i style={{ width: `${Math.max(3, Math.round(d.progress || 0))}%` }} /></span>}
               </span>
             </button>
