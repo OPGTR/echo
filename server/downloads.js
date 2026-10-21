@@ -22,6 +22,7 @@ const sources = require('./sources')
 const { sniff } = require('./platform/tools')
 
 const CONCURRENCY = 2
+const TEMP_HOURS = 48
 const active = new Map() // job id -> AbortController
 let pumping = false
 
@@ -78,18 +79,22 @@ function enqueue(items) {
     const deezerId = String(item?.deezer_id || '').replace(/^deezer:/, '')
     if (!/^\d{1,20}$/.test(deezerId)) continue
     const have = ownedTrack(deezerId)
+    // Asked for on purpose ("Télécharger", a playlist of yours): it stays.
+    if (have && item.origin !== 'mix' && !item.play) db.prepare('DELETE FROM temporary WHERE track_id = ?').run(have)
     if (have) { out.push({ deezer_id: deezerId, status: 'done', track_id: have }); continue }
     const existing = db.prepare(`SELECT * FROM downloads WHERE deezer_id = ? AND status IN ('queued', 'downloading', 'saving')`).get(deezerId)
     // Wanted for playing now: it goes before a long "download all".
+    if (existing && item.origin !== 'mix' && existing.origin === 'mix') db.prepare('UPDATE downloads SET origin = NULL WHERE id = ?').run(existing.id)
     if (existing) { if (item.play && existing.status === 'queued') db.prepare('UPDATE downloads SET created_at = 0 WHERE id = ?').run(existing.id); out.push(existing); continue }
     const row = {
       id: crypto.randomUUID(), deezer_id: deezerId,
       title: String(item.title || '').slice(0, 300), artist: String(item.artist || '').slice(0, 300),
       album: String(item.album || '').slice(0, 300), cover: typeof item.cover === 'string' && /^https:\/\//.test(item.cover) ? item.cover : null,
       duration: Number(item.duration) || null, status: 'queued', progress: 0, created_at: item.play ? 0 : now(), updated_at: now(),
+      origin: item.origin === 'mix' ? 'mix' : null,
     }
-    db.prepare(`INSERT INTO downloads (id, deezer_id, title, artist, album, cover, duration, status, progress, created_at, updated_at)
-      VALUES (@id, @deezer_id, @title, @artist, @album, @cover, @duration, @status, @progress, @created_at, @updated_at)`).run(row)
+    db.prepare(`INSERT INTO downloads (id, deezer_id, title, artist, album, cover, duration, status, progress, created_at, updated_at, origin)
+      VALUES (@id, @deezer_id, @title, @artist, @album, @cover, @duration, @status, @progress, @created_at, @updated_at, @origin)`).run(row)
     out.push(row)
   }
   setImmediate(pump)
@@ -302,6 +307,8 @@ async function run(j, signal) {
     const saved = await saveInto(work, path.join(safeName(meta.album_artist, 'Artiste'), albumDir, name))
     const { id } = await library.indexFile(saved, { deezerId: j.deezer_id })
     update(j.id, { status: 'done', progress: 100, track_id: id, message: `via:${via.name}`, error: null })
+    // Heard in a mix: on the phone for 48 h, unless you keep it (like, playlist).
+    if (job(j.id)?.origin === 'mix') getDB().prepare('INSERT OR IGNORE INTO temporary (track_id, until) VALUES (?, ?)').run(id, now() + TEMP_HOURS * 3600000)
     return id
   } finally {
     try { await artifact?.cleanup() } catch {}
@@ -314,4 +321,40 @@ function resume() {
   setImmediate(pump)
 }
 
-module.exports = { waitFor, makeDir, enqueue, list, cancel, retry, clearFinished, resume, pump, ownedTrack, saveInto, writeTags }
+
+/**
+ * Songs downloaded while listening to a mix go after 48 h, unless you kept
+ * them: liked, in a playlist of yours (or a mix you added to your playlists),
+ * or downloaded on purpose since.
+ */
+async function cleanTemporary({ at = now() } = {}) {
+  const db = getDB()
+  const due = db.prepare('SELECT track_id FROM temporary WHERE until <= ?').all(at)
+  const kept = db.prepare(`SELECT 1 FROM tracks t WHERE t.id = ? AND (t.liked = 1 OR EXISTS (
+      SELECT 1 FROM playlist_items i JOIN playlists p ON p.id = i.playlist_id
+       WHERE (i.local_id = t.id OR (i.deezer_id IS NOT NULL AND i.deezer_id = t.deezer_id))
+         AND (p.kind != 'mix' OR json_extract(p.meta, '$.saved') = 1)))`)
+  let removed = 0
+  for (const { track_id: id } of due) {
+    if (!kept.get(id)) {
+      const t = db.prepare('SELECT path FROM tracks WHERE id = ?').get(id)
+      let gone = true
+      if (t?.path) { try { await fsp.unlink(t.path) } catch (e) { if (e.code !== 'ENOENT') gone = false } }
+      if (!gone) continue
+      db.prepare('DELETE FROM tracks WHERE id = ?').run(id)
+      removed++
+    }
+    db.prepare('DELETE FROM temporary WHERE track_id = ?').run(id)
+  }
+  if (removed) console.log(`[downloads] ${removed} song(s) from mixes removed after ${TEMP_HOURS} h`)
+  return { removed }
+}
+let cleanTimer = null
+function startCleaning(every = 3600000) {
+  if (cleanTimer) return
+  setTimeout(() => cleanTemporary().catch(() => {}), 10000)
+  cleanTimer = setInterval(() => cleanTemporary().catch(() => {}), every)
+  cleanTimer.unref?.()
+}
+
+module.exports = { cleanTemporary, startCleaning, waitFor, makeDir, enqueue, list, cancel, retry, clearFinished, resume, pump, ownedTrack, saveInto, writeTags }

@@ -44,7 +44,7 @@ const server = app.listen(PORT, '127.0.0.1', () => {
   console.log(`[echo] server on 127.0.0.1:${PORT}`)
   announce()
   downloads.resume()
-  if (process.env.ECHO_NO_AUTOVERIFY !== '1') require('./sources').startAutoVerify()
+  downloads.startCleaning()
   // Catch up with files added while Écho was closed (only new or changed files are read).
   setTimeout(() => library.scan({ extraFolders: downloadDirs().filter(d => fs.existsSync(d)) }).catch(() => {}), 3000)
 })

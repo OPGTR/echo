@@ -204,6 +204,8 @@ export function PlaylistScreen({ id }) {
     return 0
   }
   const missing = pl.meta?.missing || []
+  // A mix not added to your playlists: its songs are only kept 48 h.
+  const playCtx = pl.kind === 'mix' && !pl.meta?.saved ? 'mix' : 'playlist'
   return (
     <div className="page">
       <Back><button type="button" className="icon-btn" onClick={more} aria-label={t('Plus')}><span style={{ fontSize: 22, lineHeight: 0, color: 'var(--text)' }}>⋯</span></button></Back>
@@ -218,8 +220,8 @@ export function PlaylistScreen({ id }) {
         </div>
       </div>
       <div className="btn-row">
-        <button type="button" className="btn primary" disabled={!songs.length} onClick={() => playList(songs, 0, { context: 'playlist' })}>{t('Lire')}</button>
-        <button type="button" className="btn quiet" disabled={!songs.length} onClick={() => playList(songs, 0, { shuffle: true, context: 'playlist' })}><Shuffle size={18} />{t('Aléatoire')}</button>
+        <button type="button" className="btn primary" disabled={!songs.length} onClick={() => playList(songs, 0, { context: playCtx })}>{t('Lire')}</button>
+        <button type="button" className="btn quiet" disabled={!songs.length} onClick={() => playList(songs, 0, { shuffle: true, context: playCtx })}><Shuffle size={18} />{t('Aléatoire')}</button>
         <button type="button" className="btn quiet" onClick={() => useApp.getState().open({ type: 'add-songs', id: pl.id })} aria-label={t('Ajouter des titres')}><Plus size={20} /></button>
       </div>
       <button type="button" className="sort-btn" onClick={sortSheet}><ArrowDownUp size={17} />{t('Trier')} : <b>{t(sortLabel[pl.sort] || 'Ordre perso')}</b>{pl.sort !== 'custom' && <span className="dir">{pl.sort_dir === 'desc' ? '↓' : '↑'}</span>}<ChevronDown size={16} /></button>
@@ -228,7 +230,7 @@ export function PlaylistScreen({ id }) {
         {songs.map((song, i) => (
           <div key={song.item_id} className={`pl-item ${drag?.from === i ? 'dragging' : ''}`} style={{ transform: `translateY(${shift(i)}px)`, transition: drag && drag.from !== i ? 'transform .15s' : 'none' }}>
             {custom && <button type="button" className="grip" onPointerDown={e => startDrag(e, i)} aria-label={t('Déplacer « {title} »', { title: song.title })}><GripVertical size={20} /></button>}
-            <TrackRow song={song} group={songs} playlistId={pl.id} onPlay={() => playList(songs, i, { context: 'playlist' })} menu={s => songMenu(s, { playlistId: pl.id, onChanged: load })} />
+            <TrackRow song={song} group={songs} playlistId={pl.id} onPlay={() => playList(songs, i, { context: playCtx })} menu={s => songMenu(s, { playlistId: pl.id, onChanged: load })} />
           </div>
         ))}
       </div>

@@ -10,7 +10,9 @@ const { SignedSession } = require('./session')
 const { ExtensionHost, safePath, runTool, mediaInfo } = require('./host')
 const { ExtensionRuntime } = require('./runtime')
 
-const REGISTRY = 'https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json'
+// Mornye's extension store (SpotiFLAC's, renamed in October 2026; same .sflx format).
+const REGISTRY = 'https://raw.githubusercontent.com/mornyeapp/Mornye-Extension/main/registry.json'
+const OLD_REGISTRIES = ['https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json']
 const COMPAT_VERSION = '5.1.0'
 const FEATURES = { signedSession: 3, sessionRefresh: 1, sessionGrant: 1, globalAction: 1, webviewAuth: 1, downloadSegments: 1, patternedFileTransform: 1, preparedContext: 1, accountForms: 1, accountDownloadMode: 1, directMedia: 1 }
 const hash = value => crypto.createHash('sha256').update(String(value)).digest('hex')
@@ -100,8 +102,10 @@ class PackageService {
     this.db=db;this.root=root || path.join(require('../paths').dataDir(),'spotiflac');this.fetch=fetchImpl;this.toolProvider=tools
     this.storage=new AddonStorage(this.root);this.runtimes=new Map();this.networks=new Map();this.sessions=new Map();this.operations=new Map();this.locks=new Map();this.forms=new Map()
     db.exec('CREATE TABLE IF NOT EXISTS spotiflac_repositories (id TEXT PRIMARY KEY, url TEXT NOT NULL UNIQUE, name TEXT, refreshed_at INTEGER, index_json TEXT, error TEXT); CREATE TABLE IF NOT EXISTS spotiflac_packages (key TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, manifest_json TEXT NOT NULL, repository_id TEXT, digest TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, installed_at INTEGER NOT NULL, methods_json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS spotiflac_tracks (provider TEXT NOT NULL, id TEXT NOT NULL, metadata_json TEXT NOT NULL, PRIMARY KEY(provider,id));')
+    // The store moved: installed extensions keep their repository, at its new address.
+    for(const old of OLD_REGISTRIES)db.prepare("UPDATE OR IGNORE spotiflac_repositories SET url=?,name='Mornye' WHERE url=?").run(REGISTRY,old)
     const defaultId=hash(REGISTRY).slice(0,16)
-    db.prepare('INSERT OR IGNORE INTO spotiflac_repositories (id,url,name) VALUES (?,?,?)').run(defaultId,REGISTRY,'SpotiFLAC official')
+    db.prepare('INSERT OR IGNORE INTO spotiflac_repositories (id,url,name) VALUES (?,?,?)').run(defaultId,REGISTRY,'Mornye')
   }
   tools() {
     if(this.toolProvider)return this.toolProvider()
@@ -124,7 +128,7 @@ class PackageService {
     const resources=['stream',...(addon.methods.includes('customSearch')||addon.methods.includes('searchTracks')?['search']:[]),...['album','artist','playlist'].filter(r=>addon.methods.includes(`get${r[0].toUpperCase()+r.slice(1)}`))]
     let icon=null
     if(addon.manifest.icon){try{const file=safePath(path.join(this.root,'packages',addon.key),addon.manifest.icon);const data=fs.readFileSync(file);if(data.length<256*1024&&/\.(png|jpg|jpeg|webp)$/i.test(file))icon=`data:image/${/\.png$/i.test(file)?'png':/\.webp$/i.test(file)?'webp':'jpeg'};base64,${data.toString('base64')}`}catch{}}
-    return {key:addon.key,provider:`a-${addon.key}`,id:addon.name,name:addon.manifest.displayName,version:addon.manifest.version,description:addon.manifest.description || '',icon:icon||null,resources,enabled:!!addon.enabled,installedAt:addon.installed_at,kind:'spotiflac',host:'SpotiFLAC package',repositoryId:addon.repository_id,settingsSchema:schema,settings:{...Object.fromEntries(Object.entries(values).filter(([k])=>!secretKeys.has(k)&&k!=='qualitySettings')),qualitySettings},configuredSecrets:[...secretKeys].filter(k=>values[k]),qualityOptions:addon.manifest.qualityOptions || [],signedSession:!!addon.manifest.signedSession,actions:addon.manifest.globalActions || [],searchFilters:addon.manifest.searchBehavior?.filters || [],compatibilityVersion:COMPAT_VERSION,access:this.access(addon,values),linksOnly:!addon.manifest.type.includes('download_provider')}
+    return {key:addon.key,provider:`a-${addon.key}`,id:addon.name,name:addon.manifest.displayName,version:addon.manifest.version,description:addon.manifest.description || '',icon:icon||null,resources,enabled:!!addon.enabled,installedAt:addon.installed_at,kind:'spotiflac',host:'Mornye extension',repositoryId:addon.repository_id,settingsSchema:schema,settings:{...Object.fromEntries(Object.entries(values).filter(([k])=>!secretKeys.has(k)&&k!=='qualitySettings')),qualitySettings},configuredSecrets:[...secretKeys].filter(k=>values[k]),qualityOptions:addon.manifest.qualityOptions || [],signedSession:!!addon.manifest.signedSession,actions:addon.manifest.globalActions || [],searchFilters:addon.manifest.searchBehavior?.filters || [],compatibilityVersion:COMPAT_VERSION,access:this.access(addon,values),linksOnly:!addon.manifest.type.includes('download_provider')}
   }
   /**
    * Whether an addon still needs setting up before it can stream or download:

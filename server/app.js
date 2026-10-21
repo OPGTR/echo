@@ -172,10 +172,14 @@ function createApp() {
     try {
       let local = downloads.ownedTrack(id)
       if (!local) {
-        const [job] = downloads.enqueue([{ deezer_id: id, play: true, title: String(req.query.title || ''), artist: String(req.query.artist || ''), album: String(req.query.album || ''), cover: String(req.query.cover || ''), duration: Number(req.query.duration) || null }])
+        const origin = req.query.origin === 'mix' ? 'mix' : null
+        const [job] = downloads.enqueue([{ deezer_id: id, play: true, origin, title: String(req.query.title || ''), artist: String(req.query.artist || ''), album: String(req.query.album || ''), cover: String(req.query.cover || ''), duration: Number(req.query.duration) || null }])
         local = job?.track_id || (await downloads.waitFor(id, 5 * 60000))?.track_id || null
       }
       if (!local) return res.status(404).json({ error: 'not downloaded' })
+      // The next ones get ready while this one plays (screen locked too).
+      const ahead = String(req.query.ahead || '').split(',').map(x => x.replace(/[^0-9]/g, '')).filter(Boolean).slice(0, 2)
+      if (ahead.length) downloads.enqueue(ahead.map(d => ({ deezer_id: d, origin: req.query.origin === 'mix' ? 'mix' : null })))
       req.params.id = local
       return streamTrack(req, res)
     } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }) }
@@ -289,7 +293,7 @@ function createApp() {
 
   // ----------------------------------------------------------- downloads
   app.get('/api/downloads', wrap(() => downloads.list()))
-  app.post('/api/downloads', wrap(req => downloads.enqueue((req.body?.items || []).map(i => (req.body?.play ? { ...i, play: true } : i)))))
+  app.post('/api/downloads', wrap(req => downloads.enqueue((req.body?.items || []).map(i => ({ ...i, ...(req.body?.play ? { play: true } : {}), ...(req.body?.origin === 'mix' ? { origin: 'mix' } : {}) })))))
   app.get('/api/downloads/wait', wrap(req => downloads.waitFor(String(req.query.deezer_id || ''), Number(req.query.timeout) || 60000)))
   app.post('/api/downloads/:id/cancel', wrap(req => downloads.cancel(req.params.id)))
   app.post('/api/downloads/:id/retry', wrap(req => downloads.retry(req.params.id)))
@@ -305,6 +309,7 @@ function createApp() {
   app.post('/api/sources/:id/enabled', wrap(req => sources.setEnabled(req.params.id, !!req.body?.enabled)))
   app.put('/api/sources/order', wrap(req => sources.setOrder(req.body?.ids)))
   // Tests: install an addon package directly.
+  if (process.env.ECHO_DEV === '1') app.post('/api/dev/clean-temporary', wrap(req => downloads.cleanTemporary({ at: Number(req.body?.at) || Date.now() })))
   if (process.env.ECHO_DEV === '1') app.post('/api/source/upload', wrap(async req => sources.service().install({ buffer: Buffer.from(String(req.body?.data || ''), 'base64') })))
   app.post('/api/source/verify-complete', wrap(req => sources.verifyComplete(req.body || {})))
 

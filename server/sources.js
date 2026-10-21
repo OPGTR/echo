@@ -1,5 +1,5 @@
 'use strict'
-// Where Écho downloads from: SpotiFLAC addons (engine adapted from Lokal,
+// Where Écho downloads from: Mornye (formerly SpotiFLAC) addons (engine adapted from Lokal,
 // MIT). Écho's catalogue is Deezer's; a song is fetched from the first source
 // in your order that has it: Deezer by its exact id, the others by matching
 // title, artist and length (ISRC when the source gives it).
@@ -84,10 +84,10 @@ async function catalogueEntry(id) {
   return s.catalogue().find(e => e.id === id) || null
 }
 
-/** Installs (or updates) an addon from the official SpotiFLAC catalogue. */
+/** Installs (or updates) an addon from Mornye’s catalogue (formerly SpotiFLAC). */
 async function install(id = 'deezer') {
   const entry = await catalogueEntry(id)
-  if (!entry) throw new Error(`« ${id} » n’est pas dans le catalogue SpotiFLAC pour l’instant`)
+  if (!entry) throw new Error(`« ${id} » n’est pas dans le catalogue Mornye pour l’instant`)
   if (!entry.installed || entry.updateAvailable) await service().install({ repositoryId: entry.repositoryId, id })
   return state()
 }

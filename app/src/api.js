@@ -48,7 +48,7 @@ export const api = {
   findArtist: name => call(`/catalogue/find-artist${q({ name })}`),
 
   downloads: () => call('/downloads'),
-  download: (items, { play = false } = {}) => call('/downloads', { method: 'POST', body: { items, play } }),
+  download: (items, { play = false, origin = null } = {}) => call('/downloads', { method: 'POST', body: { items, play, origin } }),
   waitDownload: (deezerId, timeout = 60000) => call(`/downloads/wait${q({ deezer_id: deezerId, timeout })}`),
   cancelDownload: id => call(`/downloads/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: {} }),
   retryDownload: id => call(`/downloads/${encodeURIComponent(id)}/retry`, { method: 'POST', body: {} }),
@@ -107,5 +107,5 @@ export const api = {
 const withToken = url => token ? `${url}${url.includes('?') ? '&' : '?'}t=${token}` : url
 export const streamUrl = id => withToken(`${base}/api/stream/${encodeURIComponent(id)}`)
 /** A catalogue song for the phone's player: downloaded by the server, then streamed. */
-export const playUrl = song => withToken(`${base}/api/play/${encodeURIComponent(song.deezer_id)}?${new URLSearchParams({ title: song.title || '', artist: song.artist || '', album: song.album || '', duration: String(song.duration || ''), cover: song.cover || '' })}`)
+export const playUrl = (song, { origin = null, ahead = [] } = {}) => withToken(`${base}/api/play/${encodeURIComponent(song.deezer_id)}?${new URLSearchParams({ title: song.title || '', artist: song.artist || '', album: song.album || '', duration: String(song.duration || ''), cover: song.cover || '', ...(origin ? { origin } : {}), ...(ahead.length ? { ahead: ahead.join(',') } : {}) })}`)
 export const artUrl = id => withToken(`${base}/api/art/${encodeURIComponent(id)}`)

@@ -194,7 +194,7 @@ export function MixScreen({ mix }) {
           <button type="button" className="btn quiet" onClick={() => downloadSongs(songs)}>{t('Tout télécharger')}</button>
         </div>
       </div>
-      <section className="section"><TrackList songs={songs} /></section>
+      <section className="section"><TrackList songs={songs} context="mix" /></section>
     </div>
   )
 }

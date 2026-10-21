@@ -143,7 +143,7 @@ async function ensureLocal(song, isCurrent) {
   if (!song.deezer_id) throw new Error('no source')
   const source = useApp.getState().source || await useApp.getState().refreshSource()
   if (!source?.installed) throw Object.assign(new Error('NO_SOURCE'), { code: 'NO_SOURCE' })
-  const [job] = await api.download([song], { play: true })
+  const [job] = await api.download([song], { play: true, origin: originOf(get().context) })
   pokeDownloads()
   if (job?.track_id) return job.track_id
   return waitForDownload(song.deezer_id, isCurrent)
@@ -154,25 +154,36 @@ function markLocal(key, localId) {
   set({ queue: queue.map(s => (keyOf(s) === key ? { ...s, local_id: localId, has_art: s.cover ? s.has_art : 1 } : s)) })
 }
 
+/** How many songs are got ready ahead: 2 in a playlist or a mix, 1 elsewhere, none after a search. */
+const aheadCount = context => (context === 'search' ? 0 : context === 'playlist' || context === 'mix' ? 2 : 1)
+/** Songs heard in a mix are on the phone for 48 h, unless you keep them. */
+const originOf = context => (context === 'mix' ? 'mix' : null)
+
 /**
- * In a mix, an album or a playlist: while a song plays, the next one is
- * downloaded (one at a time: song 2 while 1 plays, song 3 once 2 plays).
+ * While a song plays, the next ones are downloaded, one after the other
+ * (2 ahead in a playlist or a mix, 1 elsewhere).
  */
 let prefetching = null
 function prefetch() {
   const { queue, index, context, repeat } = get()
-  if (context === 'search') return
-  const following = repeat === 'all' && index + 1 >= queue.length ? queue[0] : queue[index + 1]
-  if (!following || following.local_id || !following.deezer_id || !useApp.getState().source?.installed) return
-  const key = keyOf(following)
-  if (prefetching === key) return
-  prefetching = key
-  const stillNext = () => { const s = get(); const n = s.queue[s.index + 1] || (s.repeat === 'all' ? s.queue[0] : null); return n && keyOf(n) === key }
-  api.download([following], { play: true }).then(async ([job]) => {
-    pokeDownloads()
-    const localId = job?.track_id || await waitForDownload(following.deezer_id, stillNext)
-    if (localId) { markLocal(key, localId); queueNextInEngine(); shareLibrary() }
-  }).catch(() => {}).finally(() => { if (prefetching === key) prefetching = null })
+  const count = aheadCount(context)
+  if (!count || !useApp.getState().source?.installed) return
+  const order = repeat === 'all' ? [...queue.slice(index + 1), ...queue.slice(0, index + 1)] : queue.slice(index + 1)
+  const want = order.slice(0, count).filter(x => !x.local_id && x.deezer_id)
+  if (!want.length || prefetching) return
+  const run = async () => {
+    for (const song of want) {
+      const key = keyOf(song)
+      const stillAhead = () => { const s = get(); return s.queue.slice(s.index + 1, s.index + 1 + count).some(x => keyOf(x) === key) }
+      if (!stillAhead()) continue
+      prefetching = key
+      const [job] = await api.download([song], { play: true, origin: originOf(context) }).catch(() => [])
+      pokeDownloads()
+      const localId = job?.track_id || await waitForDownload(song.deezer_id, stillAhead).catch(() => null)
+      if (localId) { markLocal(key, localId); queueNextInEngine(); shareLibrary() }
+    }
+  }
+  run().catch(() => {}).finally(() => { prefetching = null; if (get().index === index) return; prefetch() })
 }
 
 async function loadDetails(id) {
@@ -202,7 +213,7 @@ async function adopt(song) {
 async function itemFor(song, { remote = false } = {}) {
   if (!song?.local_id && remote && song?.deezer_id && !get().cast.base) {
     return {
-      id: engineId(song), url: playUrl(song), castUrl: null, mime: null,
+      id: engineId(song), url: playUrl(song, playExtras(song)), castUrl: null, mime: null,
       title: song.title || '', artist: song.artist || '', album: song.album || '',
       artwork: coverOf(song), castArtwork: song.cover || null, duration: song.duration || 0,
     }
@@ -247,6 +258,14 @@ async function queueNextInEngine() {
   engine.setUpcoming(items)
 }
 
+/** For a song the phone's player fetches: where it comes from, and the next ones to get ready. */
+function playExtras(song) {
+  const s = get()
+  const at = s.queue.findIndex(x => keyOf(x) === keyOf(song))
+  const ahead = at < 0 ? [] : s.queue.slice(at + 1, at + 1 + aheadCount(s.context)).filter(x => !x.local_id && x.deezer_id).map(x => x.deezer_id)
+  return { origin: originOf(s.context), ahead }
+}
+
 /** A song for the queue without asking the library for its details. */
 function lightItem(song, { remote = false } = {}) {
   const base = get().cast.base
@@ -259,7 +278,7 @@ function lightItem(song, { remote = false } = {}) {
     }
   }
   if (remote && song?.deezer_id && !base) {
-    return { id: engineId(song), url: playUrl(song), castUrl: null, mime: null, title: song.title || '', artist: song.artist || '', album: song.album || '', artwork: coverOf(song), castArtwork: song.cover || null, duration: song.duration || 0 }
+    return { id: engineId(song), url: playUrl(song, playExtras(song)), castUrl: null, mime: null, title: song.title || '', artist: song.artist || '', album: song.album || '', artwork: coverOf(song), castArtwork: song.cover || null, duration: song.duration || 0 }
   }
   return null
 }

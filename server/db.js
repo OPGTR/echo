@@ -63,6 +63,10 @@ CREATE TABLE IF NOT EXISTS playlist_items (
   added_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS playlist_items_pl ON playlist_items (playlist_id, pos);
+CREATE TABLE IF NOT EXISTS temporary (
+  track_id TEXT PRIMARY KEY,
+  until INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS dislikes (
   key TEXT PRIMARY KEY,
   deezer_id TEXT,
@@ -86,6 +90,8 @@ function getDB() {
   db = new Database(path.join(dataDir(), 'echo.db'))
   db.pragma('foreign_keys = ON')
   db.exec(SCHEMA)
+  // 0.3.2: where a download comes from ('mix': kept 48 h unless you keep it).
+  try { db.exec('ALTER TABLE downloads ADD COLUMN origin TEXT') } catch {}
   return db
 }
 

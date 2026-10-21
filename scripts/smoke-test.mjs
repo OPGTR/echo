@@ -249,6 +249,23 @@ try {
   ok('how recent "Récentes" is can be set', (await api('/settings')).mix_recent_months === 18)
   const played = await fetch(`${B}/play/${by['Formation'].deezer_id || '0'}`)
   ok('the play-through address answers', [200, 206, 404].includes(played.status), String(played.status))
+  // -------------------------------------------------- 0.3.2: songs heard in a mix go after 48 h
+  {
+    const { createRequire } = await import('node:module')
+    const mixJob = (await api('/downloads', { items: [{ deezer_id: '9999123', title: 'Song 9999123', artist: 'Daft Punk' }], origin: 'mix' }))[0]
+    const doneMix = await until(async () => { const d = (await api('/downloads')).find(x => x.deezer_id === '9999123' && ['done', 'error'].includes(x.status)); return d || null }, 30000)
+    ok('a song heard in a mix is downloaded', doneMix?.status === 'done', JSON.stringify(doneMix || mixJob).slice(0, 160))
+    const later = Date.now() + 49 * 3600000
+    const kept = await api('/dev/clean-temporary', { at: Date.now() + 3600000 })
+    ok('…and still there before 48 h', kept.removed === 0 && !!(await api(`/tracks/${doneMix.track_id}`)).id)
+    const gone = await api('/dev/clean-temporary', { at: later })
+    ok('…and removed after 48 h when not kept', gone.removed === 1 && (await fetch(`${B}/tracks/${doneMix.track_id}`)).status === 404, JSON.stringify(gone))
+    const likedJob = (await api('/downloads', { items: [{ deezer_id: '2701', title: 'Song 2701', artist: 'Daft Punk' }], origin: 'mix' }))[0]
+    const doneLiked = await until(async () => { const d = (await api('/downloads')).find(x => x.deezer_id === '2701' && ['done', 'error'].includes(x.status)); return d || null }, 30000)
+    if (doneLiked?.track_id) await api(`/tracks/${doneLiked.track_id}/like`, { liked: true })
+    await api('/dev/clean-temporary', { at: later })
+    ok('a song from a mix you liked stays', !!doneLiked?.track_id && (await fetch(`${B}/tracks/${doneLiked.track_id}`)).status === 200, JSON.stringify(doneLiked || likedJob).slice(0, 120))
+  }
   await api('/settings', { mix_era: 'recent' }, 'PUT')
   const fyRecent = await api('/foryou')
   ok('Pour toi with "recent" songs only (rebuilt, no crash)', fyRecent.era === 'recent' && Array.isArray(fyRecent.mixes), fyRecent.error)

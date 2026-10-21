@@ -125,7 +125,7 @@ export function Onboarding({ onDone }) {
       </>}
       {step === 2 && <>
         <h1>{t('Télécharger de la musique')}</h1>
-        <p className="note">{t('Pour télécharger les titres que tu découvres, Écho utilise l’extension Deezer de SpotiFLAC. Elle demande une vérification rapide (un captcha) une fois.')}</p>
+        <p className="note">{t('Pour télécharger les titres que tu découvres, Écho utilise l’extension Deezer de Mornye. Elle peut demander une vérification rapide (un captcha).')}</p>
         {error && <p className="note" style={{ color: 'var(--danger)' }}>{error}</p>}
         <div className="btn-row">
           <button type="button" className="btn primary" disabled={busy} onClick={source}>{busy && <Loader2 size={18} className="spin" />}{t('Installer et vérifier')}</button>
