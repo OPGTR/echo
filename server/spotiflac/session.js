@@ -18,20 +18,24 @@ class SignedSession {
     this.namespace = sha256([config.namespace || owner, config.baseUrl, config.appVersion || 'ext-1.0', config.platform || 'extension'].join('\n'))
     this.generation = 0
   }
-  // One copy per gateway as well: an addon update (new app version) keeps
-  // the session it had, instead of asking for a new verification.
-  get shared() { return sha256(['shared', this.config.baseUrl].join('\n')) }
+  get appVersion() { return this.config.appVersion || 'ext-1.0' }
+  // What Mornye sends to the gateway with every session request.
+  get gatewayHeaders() { return { 'User-Agent': `Mornye/${this.appVersion}`, Accept: 'application/json' } }
+  // Like Mornye: one session per extension version, never lent to another.
+  // The gateway ties a session to the version that verified it (Deezer signs
+  // as "deezer@1.3.5", Tidal as "tidal-web@1.2.5"), so a borrowed one is
+  // refused with "verification required" right after you verified. Sessions
+  // from Écho 0.3–0.3.3 (which shared them, with one install id for all) carry
+  // no version: they are dropped once, with a new install id.
   record() {
     let record = this.storage.read(this.namespace, 'session')
-    if (!record.session_id) {
-      let kept = {}
-      try { kept = this.storage.read(this.shared, 'session') } catch {}
-      if (kept.session_id) { record = { ...kept, ...(record.install_id ? {} : { install_id: kept.install_id }) }; this.storage.write(this.namespace, 'session', record) }
+    if (record.app_version !== this.appVersion) {
+      record = { install_id: crypto.randomBytes(16).toString('hex'), app_version: this.appVersion }
+      this.save(record)
     }
-    if (!record.install_id) { record.install_id = crypto.randomBytes(16).toString('hex'); this.save(record) }
     return record
   }
-  save(record) { this.storage.write(this.namespace, 'session', record); try { this.storage.write(this.shared, 'session', record) } catch {} }
+  save(record) { this.storage.write(this.namespace, 'session', { ...record, app_version: this.appVersion }) }
   usable(record) { return !!(record.session_id && record.session_secret && Date.parse(record.expires_at) > Date.now()) }
   endpoint(path) {
     const base = new URL(this.config.baseUrl)
@@ -51,7 +55,7 @@ class SignedSession {
       const generation = this.generation, record = this.record()
       const url = new URL(this.endpoint(this.config.endpoints?.bootstrap || '/bootstrap'))
       url.searchParams.set('app_version', this.config.appVersion || 'ext-1.0'); url.searchParams.set('install_id', record.install_id)
-      const response = await this.network.jsonResponse(url.href, { signal })
+      const response = await this.network.jsonResponse(url.href, { signal, headers: this.gatewayHeaders })
       if (!response.ok) throw new Error(`Signed-session bootstrap returned HTTP ${response.status}`)
       const body = JSON.parse(response.body)
       if (generation !== this.generation) throw new Error('Session changed during authentication')
@@ -60,7 +64,7 @@ class SignedSession {
       let state = crypto.randomBytes(24).toString('base64url')
       if (!authUrl && body.challenge_id) {
         const challenge = new URL(this.endpoint(this.config.endpoints?.challenge || '/challenge'))
-        const callback = new URL(this.config.callbackUrl || 'spotiflac://session-grant')
+        const callback = new URL(this.config.callbackUrl || 'mornye://session-grant')
         callback.searchParams.set('cb_version', 'v2grant'); callback.searchParams.set('state', state)
         challenge.searchParams.set('id', body.challenge_id)
         challenge.searchParams.set('cb', callback.href)
@@ -83,7 +87,7 @@ class SignedSession {
     this.exchange = (async () => {
       const generation = this.generation, record = this.record()
       const response = await this.network.jsonResponse(this.endpoint(this.config.endpoints?.exchange || '/session/exchange'), {
-        method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
+        method: 'POST', signal, headers: { ...this.gatewayHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ grant, install_id: record.install_id, app_version: this.config.appVersion || 'ext-1.0', platform: this.config.platform || 'extension' }),
       })
       if (!response.ok) throw new Error(`Session exchange returned HTTP ${response.status}`)
@@ -99,7 +103,7 @@ class SignedSession {
   async callback(raw, signal) {
     let url = new URL(raw)
     if (url.searchParams.get('cb')) url = new URL(url.searchParams.get('cb'))
-    const expected = new URL(this.config.callbackUrl || 'spotiflac://session-grant')
+    const expected = new URL(this.config.callbackUrl || 'mornye://session-grant')
     if (url.protocol !== expected.protocol || url.host !== expected.host || url.pathname !== expected.pathname || !this.pending || Date.now() - this.pending.createdAt > 180000 || !url.searchParams.get('state') || url.searchParams.get('state') !== this.pending.state) throw new Error('Invalid or expired verification callback')
     this.pendingGrant = url.searchParams.get('grant') || url.searchParams.get('code')
     return this.completeGrant(undefined, signal)
@@ -118,7 +122,7 @@ class SignedSession {
   }
   request(record, method, path, body, headers, signal) {
     const url = this.endpoint(path)
-    return this.network.jsonResponse(url, { method: method.toUpperCase(), body, signal, headers: { 'Content-Type': 'application/json', ...headers, ...signedHeaders(this.config, record, method, url, body) } })
+    return this.network.jsonResponse(url, { method: method.toUpperCase(), body, signal, headers: { ...this.gatewayHeaders, 'Content-Type': 'application/json', ...headers, ...signedHeaders(this.config, record, method, url, body) } })
   }
   async signedFetch(method, path, body = '', headers = {}, signal) {
     try {

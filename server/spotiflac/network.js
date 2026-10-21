@@ -35,7 +35,7 @@ class ExtensionNetwork {
       const explicitLocal = (this.permissions.network || []).some(d => d === host) && (host === 'localhost' || net.isIP(host) && privateAddress(host))
       if (!addresses.length || !explicitLocal && addresses.some(a => privateAddress(a.address))) throw new Error('Addon request resolved to a private address without explicit permission')
       const cookie = directMedia ? '' : this.cookies.getCookieStringSync(url.href)
-      const requestHeaders = { 'User-Agent': `Echo/${require('../version').version}`, ...headers }
+      const requestHeaders = { 'User-Agent': 'Mornye-Extension/1.0', ...headers } // Mornye's default for extension requests
       if (cookie && !Object.keys(requestHeaders).some(k => k.toLowerCase() === 'cookie')) requestHeaders.Cookie = cookie
       const response = await new Promise((resolve, reject) => {
         const req = (url.protocol === 'https:' ? https : http).request(url, {
