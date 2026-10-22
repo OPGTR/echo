@@ -1,10 +1,10 @@
 // Settings: appearance (theme, icon), sound (equalizer, audio test), download
 // quality and sources, folders, start page, updates.
 import React, { useEffect, useRef, useState } from 'react'
-import { ChevronRight, Check, Loader2, FolderPlus, RotateCcw, GripVertical, Plus, Upload, Info, Bluetooth, Headphones, ArrowUpCircle, ShieldCheck, Play, Pause } from 'lucide-react'
+import { ChevronRight, Check, Loader2, Search as SearchIcon, FolderPlus, RotateCcw, GripVertical, Plus, Upload, Info, Bluetooth, Headphones, ArrowUpCircle, ShieldCheck, Play, Pause } from 'lucide-react'
 import { api } from '../api'
 import { useApp, DEFAULT_PREFS } from '../store'
-import { applyEqualizer, usePlayer, playList } from '../player'
+import { applyEqualizer, usePlayer, playList, codecLabel } from '../player'
 import { Cover } from '../components/Track'
 import { engine, BANDS } from '../engine'
 import Back from '../components/Back'
@@ -239,6 +239,64 @@ export function ThemeScreen({ focus }) {
 }
 
 // --------------------------------------------------------------- equalizer
+/** "FLAC 24 bits", "FLAC 16 bits", "AAC"; hi: more than CD quality. */
+export function qualityTag(song) {
+  const info = codecLabel(song)
+  if (!info) return null
+  const hi = (song.bits || 0) > 16 || (song.sample_rate || 0) > 48000
+  return { text: info.lossless && song.bits ? t('{c} {b} bits', { c: info.label, b: song.bits }) : info.label, hi }
+}
+
+const EQ_SORTS = [['added', 'Récents'], ['played', 'Plus écoutés'], ['title', 'A–Z'], ['quality', 'Hi-res d’abord']]
+/** Every song on your phone, to pick the one the equalizer is tested with. */
+export function EqSongScreen() {
+  const [q, setQ] = useState('')
+  const [sort, setSort] = useState(() => { try { return localStorage.getItem('echo-eq-sort') || 'added' } catch { return 'added' } })
+  const [rows, setRows] = useState(null)
+  const [total, setTotal] = useState(0)
+  const [chosen, setChosen] = useState(() => { try { return JSON.parse(localStorage.getItem('echo-eq-song') || 'null')?.local_id || null } catch { return null } })
+  const back = useApp(s => s.back)
+  useEffect(() => { api.stats().then(s => setTotal(s.tracks || 0)).catch(() => {}) }, [])
+  useEffect(() => {
+    const timer = setTimeout(() => api.tracks({ sort, q: q.trim(), limit: 5000 }).then(setRows).catch(() => setRows([])), q ? 220 : 0)
+    return () => clearTimeout(timer)
+  }, [q, sort])
+  const pick = r => {
+    setChosen(r.id)
+    try { localStorage.setItem('echo-eq-song', JSON.stringify({ local_id: r.id, id: r.id, title: r.title, artist: r.artist, has_art: r.has_art, codec: r.codec, bits: r.bits, sample_rate: r.sample_rate })) } catch {}
+    back()
+  }
+  const setSortKeep = k => { setSort(k); try { localStorage.setItem('echo-eq-sort', k) } catch {} }
+  return (
+    <div className="page">
+      <Back />
+      <div className="page-head" style={{ paddingTop: 0 }}><h1>{t('Titre pour tester')}</h1></div>
+      <p className="note" style={{ marginTop: -4 }}>{total ? t('Un titre que tu connais bien, parmi les {n} de ton téléphone.', { n: total }) : t('Un titre que tu connais bien, sur ton téléphone.')}</p>
+      <label className="field"><SearchIcon size={19} /><input value={q} onChange={e => setQ(e.target.value)} placeholder={t('Titre, artiste ou album')} aria-label={t('Chercher un titre')} enterKeyHint="search" /></label>
+      <div className="chips eq-sorts" role="group" aria-label={t('Trier')}>
+        {EQ_SORTS.map(([k, label]) => <button key={k} type="button" className={`chip ${sort === k ? 'on' : ''}`} aria-pressed={sort === k} onClick={() => setSortKeep(k)}>{t(label)}</button>)}
+      </div>
+      {!rows && <div className="empty"><Loader2 className="spin" /></div>}
+      {rows && !rows.length && <div className="empty"><strong>{q ? t('Aucun titre ne correspond.') : t('Aucun titre sur ton téléphone.')}</strong>{!q && t('Télécharge un titre pour pouvoir tester l’égaliseur avec ta musique.')}</div>}
+      <div className="tracks eq-songs">
+        {(rows || []).map(r => {
+          const tag = qualityTag(r)
+          const song = { ...r, local_id: r.id }
+          return (
+            <button key={r.id} type="button" className={`eq-song ${chosen === r.id ? 'on' : ''}`} aria-pressed={chosen === r.id} onClick={() => pick(r)}>
+              <Cover song={song} />
+              <span className="text">
+                <span className="title">{r.title}</span>
+                <span className="line"><span className="sub">{r.artist}</span>{tag && <span className={`qtag ${tag.hi ? 'hi' : ''}`}>{tag.text}</span>}</span>
+              </span>
+              {chosen === r.id && <Check size={22} strokeWidth={2.4} className="tick" />}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 /**
  * A song of yours to set the equalizer by ear, and "Sans / Avec" to hear the
  * difference while it plays (only for listening: your setting doesn't change).
@@ -256,14 +314,7 @@ function EqTestSong({ eq }) {
   // Leaving the screen: your setting is back.
   useEffect(() => () => applyEqualizer(useApp.getState().prefs.eq), [])
   useEffect(() => { applyEqualizer(bypass ? { ...eq, enabled: false } : eq) }, [bypass, eq.enabled, eq.preamp, eq.bands.join()])
-  const choose = async () => {
-    const rows = await api.tracks({ sort: 'played', limit: 40 }).catch(() => [])
-    useApp.getState().showSheet({
-      title: t('Titre pour tester'),
-      subtitle: t('Un titre que tu connais bien, sur ton téléphone'),
-      items: rows.map(r => ({ label: `${r.title} · ${r.artist}`, checked: song?.local_id === r.id, onSelect: () => { const s2 = { ...r, local_id: r.id }; setSong(s2); try { localStorage.setItem('echo-eq-song', JSON.stringify({ local_id: r.id, id: r.id, title: r.title, artist: r.artist, has_art: r.has_art, codec: r.codec })) } catch {} } })),
-    })
-  }
+  const choose = () => useApp.getState().open({ type: 'eq-song' })
   const toggle = () => (playing ? (engine.pause(), usePlayer.setState({ playing: false })) : playList([song], 0, { context: 'search' }))
   if (!song) return <div className="set-card pad eq-test"><p className="note" style={{ margin: 0 }}>{t('Télécharge un titre pour pouvoir tester l’égaliseur avec ta musique.')}</p></div>
   return (
@@ -271,7 +322,7 @@ function EqTestSong({ eq }) {
       <div className="eq-test-h">{t('Titre pour tester')}</div>
       <div className="eq-test-song">
         <Cover song={song} />
-        <span className="text"><span className="title">{song.title}</span><span className="sub">{[song.artist, song.codec ? String(song.codec).toUpperCase() : null].filter(Boolean).join(' · ')}</span></span>
+        <span className="text"><span className="title">{song.title}</span><span className="sub">{[song.artist, qualityTag(song)?.text].filter(Boolean).join(' · ')}</span></span>
         <button type="button" className="btn quiet small" onClick={choose}>{t('Changer')}</button>
       </div>
       <div className="eq-test-ab">
@@ -479,6 +530,69 @@ function AudioTestResult({ limit, output, onDone, onRetry }) {
 }
 
 // ---------------------------------------------------------------- sources
+/** "vérifiée aujourd’hui à 14:02", "hier à 9:15", "le 18 oct." */
+const verifiedWhen = iso => {
+  const d = new Date(iso)
+  if (!iso || isNaN(d)) return ''
+  const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((day(new Date()) - day(d)) / 86400000)
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  if (days === 0) return t('vérifiée aujourd’hui à {time}', { time })
+  if (days === 1) return t('vérifiée hier à {time}', { time })
+  return t('vérifiée le {date}', { date: d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) })
+}
+
+/**
+ * The sources you use, from the shortcut on Pour toi: which ones are ready,
+ * "Vérifier" for one that needs it, "Revérifier" to start a fresh one.
+ */
+export function SourcesPanel() {
+  const [state, setState] = useState(null)
+  const [busy, setBusy] = useState(null)
+  const app = useApp()
+  const load = () => api.sources().then(setState).catch(() => {})
+  useEffect(() => { load() }, [])
+  const list = (state?.sources || []).filter(s => s.installed && s.enabled)
+  const run = async (id, fn) => {
+    setBusy(id)
+    try { const r = await fn(); if (r?.sources) setState(r); else await load() } catch (e) { app.toast(e.message) } finally { setBusy(null); app.refreshSource() }
+  }
+  const all = () => run('all', async () => {
+    await api.checkSources().catch(() => null)
+    let r = await api.sources()
+    for (const s of r.sources.filter(x => x.installed && x.enabled && !x.ready)) r = await setUpSource({ install: false, id: s.id })
+    return r
+  })
+  const line = s => {
+    if (!s.ready) return t('Vérification à faire')
+    if (s.access?.kind !== 'verification') return t('Prête · pas de vérification')
+    const when = verifiedWhen(s.access?.verifiedAt)
+    return when ? `${t('Prête')} · ${when}` : t('Prête')
+  }
+  return (
+    <div className="src-panel">
+      <p className="note src-panel-note">{t('Écho essaie les sources dans cet ordre. Une source « à vérifier » est sautée jusqu’à ce que tu la vérifies.')}</p>
+      {!state && <div className="empty" style={{ padding: 24 }}><Loader2 className="spin" /></div>}
+      {state && !list.length && <p className="note">{t('Aucune source active. Active-en une dans les réglages des sources.')}</p>}
+      {list.map(s => (
+        <div key={s.id} className="src-line">
+          <i className={`src-dot ${s.ready ? 'ok' : 'warn'}`} aria-hidden="true" />
+          <span className="text"><span className="title">{s.name}</span><span className={`sub ${s.ready ? '' : 'warn'}`}>{line(s)}</span></span>
+          {busy === s.id ? <Loader2 size={22} className="spin" /> : !s.ready ? (
+            <button type="button" className="btn primary small" onClick={() => run(s.id, () => setUpSource({ install: false, id: s.id }))}><ShieldCheck size={16} />{t('Vérifier')}</button>
+          ) : s.access?.kind === 'verification' ? (
+            <button type="button" className="btn quiet small" aria-label={t('Revérifier {s}', { s: s.name })} onClick={() => run(s.id, () => setUpSource({ install: false, id: s.id, force: true }))}><RotateCcw size={16} />{t('Revérifier')}</button>
+          ) : null}
+        </div>
+      ))}
+      <div className="btn-row src-panel-actions">
+        <button type="button" className="btn primary" disabled={!!busy || !list.length} onClick={all}>{busy === 'all' ? <Loader2 size={18} className="spin" /> : <RotateCcw size={18} />}{t('Tout vérifier')}</button>
+        <button type="button" className="btn quiet" onClick={() => { app.closeSheet(); app.open({ type: 'sources' }) }}>{t('Réglages des sources')}</button>
+      </div>
+    </div>
+  )
+}
+
 export function SourcesScreen({ focus, verify }) {
   const [state, setState] = useState(null)
   const [busy, setBusy] = useState(null)

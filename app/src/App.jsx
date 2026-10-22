@@ -8,7 +8,7 @@ import Search, { CatalogueAlbum, CatalogueArtist } from './screens/Search'
 import Library, { LocalAlbum, LocalArtist, FollowsScreen } from './screens/Library'
 import { Downloads, Onboarding, Startup } from './screens/Settings'
 import Playlists, { PlaylistScreen, ImportScreen, MixCreate, LikedScreen, AddSongs, CoverPicker } from './screens/Playlists'
-import { SettingsHome, ThemeScreen, EqualizerScreen, QualityScreen, AudioTest, SourcesScreen, FoldersScreen, StartScreen, UpdateScreen, DislikesScreen } from './screens/Preferences'
+import { SettingsHome, ThemeScreen, EqualizerScreen, EqSongScreen, QualityScreen, AudioTest, SourcesScreen, FoldersScreen, StartScreen, UpdateScreen, DislikesScreen } from './screens/Preferences'
 import { DEFAULT_PREFS } from './store'
 import { applyTheme } from './theme'
 import { applyEqualizer } from './player'
@@ -29,6 +29,7 @@ function Screen() {
       case 'settings': return <SettingsHome />
       case 'theme': return <ThemeScreen focus={top.focus} />
       case 'equalizer': return <EqualizerScreen />
+      case 'eq-song': return <EqSongScreen />
       case 'quality': return <QualityScreen />
       case 'audio-test': return <AudioTest />
       case 'sources': return <SourcesScreen focus={top.focus} verify={!!top.verify} />

@@ -100,7 +100,7 @@ export const api = {
 
   source: () => call('/source'),
   installSource: () => call('/source/install', { method: 'POST', body: {} }),
-  verifyInfo: id => call('/source/verify-info', { method: 'POST', body: { id } }),
+  verifyInfo: (id, { force = false } = {}) => call('/source/verify-info', { method: 'POST', body: { id, force } }),
   verifyComplete: body => call('/source/verify-complete', { method: 'POST', body }),
 }
 

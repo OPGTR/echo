@@ -45,6 +45,8 @@ export const useApp = create((set, get) => ({
     if (s.selection && !s.sheet && !s.dialog) { set({ selection: null }); return true }
     if (s.dialog) { s.closeDialog(null); return true }
     if (s.sheet) { set({ sheet: null }); return true }
+    // A screen's own step back first (e.g. closing a playlist's search).
+    if (s.backHook?.()) return true
     if (s.stack.length) { set({ stack: s.stack.slice(0, -1), selection: null }); return true }
     const start = s.prefs.startTab || 'home'
     if (s.tab !== start) { set({ tab: start }); return true }

@@ -244,6 +244,21 @@ try {
     ok('0.3.5: gateway answers carry retryMode/retryAfterSeconds like Mornye', a.retryMode === 'poll_existing' && a.retryAfterSeconds === 2 && a.code === 'OPERATION_PENDING' && a.retryable === true && a.error === 'preparing' && a.origin === 'provider', JSON.stringify(a))
     const plain = answer({ status: 200, ok: true, headers: { 'retry-after': '5' }, body: '{}' }, {})
     ok('0.3.5: a plain answer has no error fields', plain.error === undefined && plain.retryAfterSeconds === 5)
+    // 0.3.6: a working verification is kept (no gateway call); "Revérifier" asks for a fresh one; the time it was verified is known.
+    const { SignedSession } = createRequire(import.meta.url)('../server/spotiflac/session.js')
+    const mem = new Map(), store = { read: (n, k) => ({ ...(mem.get(n + k) || {}) }), write: (n, k, v) => mem.set(n + k, v) }
+    let boots = 0
+    const net = { permissions: { network: ['api.zarz.moe'] }, jsonResponse: async url => url.includes('/bootstrap') ? (boots++, { ok: true, status: 200, body: JSON.stringify({ challenge_id: 'c' + boots }) }) : { ok: true, status: 200, body: JSON.stringify({ session_id: 's', session_secret: 'x', expires_at: new Date(Date.now() + 864e5).toISOString() }) } }
+    const ss = new SignedSession({ namespace: 'zarz-v2', baseUrl: 'https://api.zarz.moe/v2', appVersion: 'deezer@1.3.5', platform: 'extension', endpoints: {} }, store, net, 'deezer')
+    await ss.bootstrap(); await ss.completeGrant('g')
+    const n0 = boots, kept = await ss.bootstrap()
+    ok('0.3.6: a working verification is kept, with its time', kept === true && boots === n0 && !!ss.status().verified_at)
+    ok('0.3.6: "Revérifier" asks for a fresh verification', (await ss.bootstrap(undefined, { force: true })) === false && boots === n0 + 1 && !!ss.pending?.url && ss.status().authenticated)
+  }
+  {
+    const q = await api('/library/tracks?sort=quality&limit=50')
+    const hi = q.findIndex(t => (t.bits || 0) > 16 || (t.sample_rate || 0) > 48000), lo = q.findIndex(t => !t.lossless)
+    ok('0.3.6: "Hi-res d’abord" sorts the best files first', Array.isArray(q) && q.length > 0 && (hi < 0 || lo < 0 || hi < lo), q.map(t => `${t.codec}/${t.bits}`).join(' '))
   }
   // -------------------------------------------------- 0.3
   const mixesBefore = await api('/playlists')

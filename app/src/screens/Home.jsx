@@ -9,6 +9,7 @@ import Rings from '../components/Rings'
 import { TrackList, TrackRow, Cover, downloadSongs } from '../components/Track'
 import Back from '../components/Back'
 import { HeadActions } from '../components/Chrome'
+import { SourcesPanel } from './Preferences'
 import { t } from '../i18n'
 
 function greeting() {
@@ -131,7 +132,7 @@ export default function Home() {
     <div className="page">
       <div className="page-head" style={{ minHeight: 0, paddingBottom: 0 }}>
         <span style={{ flex: 1 }} />
-        <HeadActions withUpdate />
+        <HeadActions withUpdate onSources={() => useApp.getState().showSheet({ title: t('Sources'), items: [], footer: <SourcesPanel /> })} />
       </div>
       <div className="hello">
         <h1>{greeting()}</h1>

@@ -199,6 +199,8 @@ const SORTS = {
   artist: 'artist COLLATE NOCASE ASC, album COLLATE NOCASE, disc_no, track_no',
   played: 'play_count DESC, last_played DESC',
   recent: 'last_played DESC',
+  // Best first: hi-res, then the other lossless files, then the rest.
+  quality: '(bits > 16 OR sample_rate > 48000) DESC, lossless DESC, bits DESC, sample_rate DESC, added_at DESC',
 }
 
 function words(q) { return String(q || '').trim().toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6) }

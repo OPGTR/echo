@@ -59,11 +59,14 @@ class SignedSession {
   }
   status() {
     const record = this.record()
-    return { authenticated: this.usable(record) && !this.blocked, verification_required: !!this.pending, expires_at: record.expires_at || '', session_id: record.session_id || '', install_id: record.install_id, app_version: this.config.appVersion || 'ext-1.0', platform: this.config.platform || 'extension', auth_url: this.pending?.url || '' }
+    return { authenticated: this.usable(record) && !this.blocked, verified_at: record.verified_at || '', verification_required: !!this.pending, expires_at: record.expires_at || '', session_id: record.session_id || '', install_id: record.install_id, app_version: this.config.appVersion || 'ext-1.0', platform: this.config.platform || 'extension', auth_url: this.pending?.url || '' }
   }
   clear() { const record = this.record(); this.generation++; this.save({ install_id: record.install_id }); this.pending = null; this.blocked = false; return { success: true } }
   verification() { return { ok: false, needsVerification: true, error: 'VERIFY_REQUIRED', auth_url: this.pending?.url || '', open_auth_url: this.pending?.url || '' } }
-  async bootstrap(signal) {
+  // Like Mornye: a session that still works is kept, unless you ask for a
+  // fresh verification yourself (force).
+  async bootstrap(signal, { force = false } = {}) {
+    if (!force && this.usable(this.record()) && !this.blocked) { this.pending = null; return true }
     if (this.flight) return this.flight
     this.flight = (async () => {
       const generation = this.generation, record = this.record()
@@ -73,7 +76,7 @@ class SignedSession {
       if (!response.ok) throw new Error(`Signed-session bootstrap returned HTTP ${response.status}`)
       const body = JSON.parse(response.body)
       if (generation !== this.generation) throw new Error('Session changed during authentication')
-      if (body.session_id && body.session_secret && body.expires_at) { this.save({ ...record, ...body }); this.pending = null; this.blocked = false; return true }
+      if (body.session_id && body.session_secret && body.expires_at) { this.save({ ...record, ...body, verified_at: new Date().toISOString() }); this.pending = null; this.blocked = false; return true }
       let authUrl = body.auth_url || body.challenge_url
       let state = crypto.randomBytes(24).toString('base64url')
       if (!authUrl && body.challenge_id) {
@@ -108,7 +111,7 @@ class SignedSession {
       const body = JSON.parse(response.body)
       if (!body.session_id || !body.session_secret || !body.expires_at) throw new Error('Session exchange omitted its session fields')
       if (generation !== this.generation) throw new Error('Session changed during authentication')
-      this.save({ ...record, session_id: body.session_id, session_secret: body.session_secret, expires_at: body.expires_at })
+      this.save({ ...record, session_id: body.session_id, session_secret: body.session_secret, expires_at: body.expires_at, verified_at: new Date().toISOString() })
       this.pending = null; this.pendingGrant = null; this.blocked = false
       return { success: true }
     })().finally(() => { this.exchange = null })

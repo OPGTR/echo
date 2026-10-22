@@ -132,10 +132,10 @@ function startAutoVerify(every = 4 * 3600000) {
 }
 
 /** What the phone's verification window needs (page, callback, allowed domains). */
-async function verifyInfo(id) {
+async function verifyInfo(id, { force = false } = {}) {
   const key = keyOf(id)
   if (!key) throw new Error('NO_SOURCE')
-  return dispatch(getDB(), { action: 'package.authInfo', key })
+  return dispatch(getDB(), { action: 'package.authInfo', key, force: !!force })
 }
 async function verifyComplete({ id, url, cookies } = {}) {
   const key = keyOf(id)

@@ -303,7 +303,7 @@ function createApp() {
   app.get('/api/source', wrap(() => sources.state()))
   app.post('/api/source/install', wrap(() => sources.installDeezer()))
   app.post('/api/sources/check', wrap(() => sources.autoVerify().then(() => sources.state())))
-  app.post('/api/source/verify-info', wrap(req => sources.verifyInfo(req.body?.id)))
+  app.post('/api/source/verify-info', wrap(req => sources.verifyInfo(req.body?.id, { force: req.body?.force === true })))
   app.get('/api/sources', wrap(() => sources.state()))
   app.post('/api/sources/:id/install', wrap(req => sources.install(req.params.id)))
   app.post('/api/sources/:id/enabled', wrap(req => sources.setEnabled(req.params.id, !!req.body?.enabled)))

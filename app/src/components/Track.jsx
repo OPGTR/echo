@@ -139,7 +139,23 @@ export async function downloadSongs(songs) {
 /** How a song is told apart in a selection (a playlist can hold a song twice). */
 export const selKey = song => (song.item_id ? `i:${song.item_id}` : keyOf(song))
 
-export function TrackRow({ song, onPlay, number = null, showCover = true, menu = null, group = null, playlistId = null }) {
+/** Folds accents and case, so "cote" finds "Côté". */
+export const fold = text => String(text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+
+/** The text with the part matching `q` (accents and case aside) in the accent colour. */
+export function Marked({ text, q }) {
+  const needle = fold(q).trim()
+  const chars = Array.from(String(text || ''))
+  if (!needle) return chars.join('')
+  let folded = '', at = []
+  chars.forEach((c, i) => { const f = fold(c); folded += f; for (let k = 0; k < f.length; k++) at.push(i) })
+  const hit = folded.indexOf(needle)
+  if (hit < 0) return chars.join('')
+  const start = at[hit], end = at[hit + needle.length - 1] + 1
+  return <>{chars.slice(0, start).join('')}<mark className="hit">{chars.slice(start, end).join('')}</mark>{chars.slice(end).join('')}</>
+}
+
+export function TrackRow({ song, onPlay, number = null, showCover = true, menu = null, group = null, playlistId = null, highlight = '' }) {
   const isCurrent = usePlayer(s => { const c = s.queue[s.index]; return !!c && keyOf(c) === keyOf(song) })
   const job = useApp(s => (!song.local_id && song.deezer_id ? s.downloads.find(d => d.deezer_id === String(song.deezer_id) && ['queued', 'downloading', 'saving'].includes(d.status)) : null))
   const key = selKey(song)
@@ -168,8 +184,8 @@ export function TrackRow({ song, onPlay, number = null, showCover = true, menu =
         {number !== null && !selecting && <span className="track-num">{number}</span>}
         {showCover && <Cover song={song} />}
         <span className="text">
-          <span className="title" style={{ display: 'block' }}>{song.title}{song.version ? ` ${song.version}` : ''}</span>
-          <span className="sub" style={{ display: 'block' }}>{song.artist}</span>
+          <span className="title" style={{ display: 'block' }}><Marked text={song.title} q={highlight} />{song.version ? ` ${song.version}` : ''}</span>
+          <span className="sub" style={{ display: 'block' }}><Marked text={song.artist} q={highlight} /></span>
         </span>
         {!selecting && <span className="state"><StateMark song={song} progress={job ? (job.status === 'queued' ? 0 : job.progress) : null} /></span>}
       </button>

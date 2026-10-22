@@ -34,8 +34,10 @@ async function dispatch(db, request = {}) {
     // Verification in a window the host draws itself (the Android app):
     // what to load and where it may go, then the callback and its cookies.
     case 'package.authInfo': {
-      const runtime=await packages.runtime(key);if(runtime.host.session)await runtime.host.session.bootstrap(runtime.host.signal)
+      // force: a new verification although the current one still works ("Revérifier").
+      const runtime=await packages.runtime(key);if(runtime.host.session)await runtime.host.session.bootstrap(runtime.host.signal,{force:!!request.force})
       const status=await packages.authStatus(key),pending=runtime.host.session?.pending || runtime.host.auth.pending
+      if(request.force&&pending?.url)status.authenticated=false
       if(!pending?.url)return {...status,url:null}
       const permissions=runtime.host.network.permissions
       require('./network').validateURL(pending.url,permissions)

@@ -49,7 +49,7 @@ export function Downloads() {
 
 // ------------------------------------------------------------- sources
 /** Installs a source if needed (Deezer by default), then runs its one-time check. */
-export async function setUpSource({ install = true, id = 'deezer' } = {}) {
+export async function setUpSource({ install = true, id = 'deezer', force = false } = {}) {
   const app = useApp.getState()
   let state = await api.sources()
   let src = state.sources.find(x => x.id === id)
@@ -58,8 +58,8 @@ export async function setUpSource({ install = true, id = 'deezer' } = {}) {
     state = await api.installSourceId(id)
     src = state.sources.find(x => x.id === id)
   }
-  if (src?.ready) { app.refreshSource(); return state }
-  const info = await api.verifyInfo(id)
+  if (src?.ready && !force) { app.refreshSource(); return state }
+  const info = await api.verifyInfo(id, { force })
   if (info?.url && !info?.authenticated) {
     const result = await verifyWindow({ url: info.url, callback: info.callback, domains: info.domains || [] })
     await api.verifyComplete({ id, url: result?.url || null, cookies: result?.cookies || [] })

@@ -1,11 +1,11 @@
 // Playlists: yours, imported ones and the mixes you keep; a playlist's page
 // (sort, custom order by dragging), importing a link, and "Ton mix".
 import React, { useEffect, useRef, useState } from 'react'
-import { Plus, Download, ArrowDownUp, ChevronDown, GripVertical, Loader2, Link as LinkIcon, Check, X, Search as SearchIcon, Pencil, Trash2, Heart, Shuffle, ListMusic, Image as ImageIcon, Smartphone } from 'lucide-react'
+import { Plus, Download, ArrowDownUp, ChevronDown, ChevronLeft, GripVertical, Loader2, Link as LinkIcon, Check, X, Search as SearchIcon, Pencil, Trash2, Heart, Shuffle, ListMusic, Image as ImageIcon, Smartphone } from 'lucide-react'
 import { api, artUrl } from '../api'
 import { useApp } from '../store'
 import { playList } from '../player'
-import { TrackRow, Cover, songMenu, downloadSongs, askPlaylistName } from '../components/Track'
+import { TrackRow, Cover, songMenu, downloadSongs, askPlaylistName, fold } from '../components/Track'
 import { HeadActions } from '../components/Chrome'
 import Rings from '../components/Rings'
 import Back from '../components/Back'
@@ -133,8 +133,16 @@ export function PlaylistScreen({ id }) {
   const [pl, setPl] = useState(null)
   const [error, setError] = useState('')
   const [drag, setDrag] = useState(null) // { from, to, dy }
+  const [finding, setFinding] = useState(false) // the search field is open
+  const [q, setQ] = useState('')
   const version = useApp(s => s.libraryVersion)
   const back = useApp(s => s.back)
+  // The phone's back button closes the search before leaving the playlist.
+  useEffect(() => {
+    if (!finding) return
+    useApp.setState({ backHook: () => { setFinding(false); setQ(''); return true } })
+    return () => useApp.setState({ backHook: null })
+  }, [finding])
   const listRef = useRef(null)
   const load = () => api.playlist(id).then(setPl).catch(e => setError(e.message))
   useEffect(() => { load() }, [id, version])
@@ -206,9 +214,34 @@ export function PlaylistScreen({ id }) {
   const missing = pl.meta?.missing || []
   // A mix not added to your playlists: its songs are only kept 48 h.
   const playCtx = pl.kind === 'mix' && !pl.meta?.saved ? 'mix' : 'playlist'
+  if (finding) {
+    // Title, artist and album, accents aside; a touch plays the playlist from there, in its order.
+    const needle = fold(q).trim()
+    const hits = needle ? songs.map((song, i) => ({ song, i })).filter(({ song }) => fold(`${song.title} ${song.version || ''}\n${song.artist}\n${song.album || ''}`).includes(needle)) : []
+    const close = () => { setFinding(false); setQ('') }
+    return (
+      <div className="page">
+        <div className="back-row find-row">
+          <button type="button" className="icon-btn" style={{ color: 'var(--text)' }} onClick={close} aria-label={t('Fermer la recherche')}><ChevronLeft size={28} /></button>
+          <label className="field">
+            <SearchIcon size={19} />
+            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={t('Chercher dans « {name} »', { name: pl.name })} aria-label={t('Chercher dans « {name} »', { name: pl.name })} enterKeyHint="search" />
+            {q && <button type="button" className="icon-btn small" onClick={() => setQ('')} aria-label={t('Effacer')}><X size={18} /></button>}
+          </label>
+        </div>
+        {needle && <p className="find-count">{hits.length ? t('{n} sur {total} dans « {name} »', { n: plural(hits.length, '1 titre', '{n} titres'), total: songs.length, name: pl.name }) : t('Aucun titre ne correspond dans « {name} ».', { name: pl.name })}</p>}
+        <div className="tracks">
+          {hits.map(({ song, i }) => (
+            <TrackRow key={song.item_id} song={song} group={songs} playlistId={pl.id} highlight={needle} onPlay={() => playList(songs, i, { context: playCtx })} menu={s => songMenu(s, { playlistId: pl.id, onChanged: load })} />
+          ))}
+        </div>
+        {!needle && <p className="note">{t('Cherche dans le titre, l’artiste et l’album. Touche un titre : la playlist se lit à partir de lui, dans son ordre.')}</p>}
+      </div>
+    )
+  }
   return (
     <div className="page">
-      <Back><button type="button" className="icon-btn" onClick={more} aria-label={t('Plus')}><span style={{ fontSize: 22, lineHeight: 0, color: 'var(--text)' }}>⋯</span></button></Back>
+      <Back>{songs.length > 0 && <button type="button" className="icon-btn find-btn" onClick={() => setFinding(true)} aria-label={t('Chercher dans la playlist')}><SearchIcon size={21} /></button>}<button type="button" className="icon-btn" onClick={more} aria-label={t('Plus')}><span style={{ fontSize: 22, lineHeight: 0, color: 'var(--text)' }}>⋯</span></button></Back>
       <div className="pl-hero">
         <button type="button" className="pl-cover" onClick={() => songs.length >= 4 ? useApp.getState().open({ type: 'cover', id: pl.id }) : useApp.getState().toast(t('Il faut au moins 4 titres pour composer l’image.'))} aria-label={t('Changer l’image de la playlist')}>
           <Mosaic pl={pl} size={120} />

@@ -139,8 +139,8 @@ class PackageService {
     const missing=(addon.manifest.settings || []).filter(field=>field.required&&field.type!=='button'&&(values[field.key]===undefined||values[field.key]==='')).map(field=>field.label || field.key)
     if(addon.manifest.signedSession){
       const config=addon.manifest.signedSession,live=this.sessions.get(hash(JSON.stringify(config)))
-      let verified=false;try{verified=!!(live || new SignedSession(config,this.storage,null,addon.key)).status().authenticated}catch{}
-      return {kind:'verification',ready:verified&&!missing.length,verified,missing}
+      let verified=false,verifiedAt='';try{const st=(live || new SignedSession(config,this.storage,null,addon.key)).status();verified=!!st.authenticated;verifiedAt=st.verified_at || ''}catch{}
+      return {kind:'verification',ready:verified&&!missing.length,verified,verifiedAt,missing}
     }
     const login=(addon.manifest.globalActions || []).some(item=>/log\s*in|sign\s*in|connect|auth|account/i.test(`${item.action} ${item.label || ''}`))
     if(login){

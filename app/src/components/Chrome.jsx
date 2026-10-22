@@ -2,7 +2,7 @@
 // rings with the song's progress), the full player with lyrics and casting,
 // the queue, sheets, toasts.
 import React, { useEffect, useRef, useState } from 'react'
-import { Sparkles, Search, Library, ListMusic, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Heart, ChevronDown, Loader2, Download, Settings, X, Mic, Cast, Smartphone, Tv, Speaker, ArrowUpCircle, Check, MoreVertical } from 'lucide-react'
+import { ShieldCheck, Sparkles, Search, Library, ListMusic, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Heart, ChevronDown, Loader2, Download, Settings, X, Mic, Cast, Smartphone, Tv, Speaker, ArrowUpCircle, Check, MoreVertical } from 'lucide-react'
 import { useApp } from '../store'
 import { api } from '../api'
 import { usePlayer, toggle, next, previous, seek, toggleShuffle, cycleRepeat, toggleLike, openFull, coverOf, keyOf, jumpTo, removeFromQueue, codecLabel, castScan, castTo, stopCasting, stopPlayer, restorePlayer } from '../player'
@@ -492,8 +492,10 @@ export function Toasts() {
 }
 
 /** Downloads and Settings, top right of each tab (and the update, when there is one). */
-export function HeadActions({ withUpdate = false }) {
+export function HeadActions({ withUpdate = false, onSources = null }) {
   const open = useApp(s => s.open)
+  // A source waiting for its verification: the shortcut shows it.
+  const needsCheck = useApp(s => !!s.source?.sources?.some(x => x.installed && x.enabled && !x.ready))
   const downloads = useApp(s => s.downloads)
   const update = useApp(s => s.update)
   const active = downloads.filter(d => ['queued', 'downloading', 'saving'].includes(d.status))
@@ -504,6 +506,11 @@ export function HeadActions({ withUpdate = false }) {
       {withUpdate && update?.available && (
         <button type="button" className="icon-btn on" onClick={() => open({ type: 'update' })} aria-label={t('Mise à jour disponible')} style={{ position: 'relative' }}>
           <ArrowUpCircle size={22} /><i className="head-dot" />
+        </button>
+      )}
+      {onSources && (
+        <button type="button" className={`icon-btn ${needsCheck ? 'on' : ''}`} onClick={onSources} aria-label={needsCheck ? t('Sources : une vérification à faire') : t('Sources')} style={{ position: 'relative' }}>
+          <ShieldCheck size={22} />{needsCheck && <i className="head-dot" />}
         </button>
       )}
       <button type="button" className={`icon-btn ${active.length ? 'on' : ''}`} onClick={() => open({ type: 'downloads' })}
