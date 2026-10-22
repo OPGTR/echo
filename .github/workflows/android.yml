@@ -74,7 +74,17 @@ jobs:
             echo "::warning::Clé de signature absente : ajoute ECHO_KEYSTORE_BASE64, ECHO_KEYSTORE_PASSWORD, ECHO_KEY_ALIAS et ECHO_KEY_PASSWORD dans Settings > Secrets and variables > Actions."
             exit 0
           fi
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/echo.keystore"
+          # Tolerant of a copy-paste: spaces, line breaks or a label before the
+          # key ("MII..." is how every keystore starts in base64).
+          clean=$(printf '%s' "$KEYSTORE_BASE64" | tr -d ' \r\n\t')
+          case "$clean" in *MII*) clean="MII${clean#*MII}" ;; esac
+          echo "Clé : ${#KEYSTORE_BASE64} caractères reçus, ${#clean} gardés, début « ${clean:0:4} »"
+          printf '%s' "$clean" | base64 -d > "$RUNNER_TEMP/echo.keystore" || { echo "::error::ECHO_KEYSTORE_BASE64 n'est pas un base64 valide."; exit 1; }
+          # The password must open it, and the alias must be in it (only names are shown).
+          if ! keytool -list -keystore "$RUNNER_TEMP/echo.keystore" -storepass "$KEYSTORE_PASSWORD" > "$RUNNER_TEMP/ks.txt" 2>&1; then
+            echo "::error::La clé ne s'ouvre pas avec ECHO_KEYSTORE_PASSWORD (ou ECHO_KEYSTORE_BASE64 est incomplet)."; grep -v -i pass "$RUNNER_TEMP/ks.txt" | head -5; exit 1
+          fi
+          grep -iq "^${KEY_ALIAS}," "$RUNNER_TEMP/ks.txt" || { echo "::error::L'alias « $KEY_ALIAS » (ECHO_KEY_ALIAS) n'est pas dans la clé."; grep -E "^[^ ]+, " "$RUNNER_TEMP/ks.txt" | cut -d, -f1; exit 1; }
           {
             echo "ECHO_KEYSTORE_FILE=$RUNNER_TEMP/echo.keystore"
             echo "ECHO_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
