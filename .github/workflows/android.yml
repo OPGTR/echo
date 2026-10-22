@@ -104,6 +104,7 @@ jobs:
       - name: Collect, signed with the key rotation (old public key -> new private key)
         run: |
           set -e
+          exec > >(tee collect.log) 2>&1
           # The old shared key is public: nothing is ever signed with it alone again.
           if [ -z "$ECHO_KEYSTORE_FILE" ]; then echo "::error::Pas de clé de signature privée (secrets GitHub) : rien n'est signé ni publié."; exit 1; fi
           tools="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
@@ -132,6 +133,15 @@ jobs:
             [ "$(grep -c 'SHA-256 digest' lineage.txt)" -ge 2 ]
           done
           ls -la out
+
+      - name: Signing log (when it fails)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -f collect.log ] || exit 0
+          gh release view ci-logs > /dev/null 2>&1 || gh release create ci-logs --prerelease --title "CI logs" --notes "Build logs" --target "$GITHUB_SHA"
+          gh release upload ci-logs collect.log --clobber
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
