@@ -5,13 +5,39 @@ const net = require('net')
 const { CookieJar } = require('tough-cookie')
 
 const REDIRECTS = new Set([301, 302, 303, 307, 308])
+// Addresses an extension may not reach: the phone itself, the local network,
+// and the IPv6 forms that hide an IPv4 one (::ffff:7f00:1 is 127.0.0.1).
+const V4 = new net.BlockList(), V6 = new net.BlockList()
+for (const [a, n] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 4], ['240.0.0.0', 4]]) V4.addSubnet(a, n, 'ipv4')
+for (const [a, n] of [['::1', 128], ['::', 128], ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8], ['2001:db8::', 32]]) V6.addSubnet(a, n, 'ipv6')
+/** The IPv4 address an IPv6 one carries (::ffff:a.b.c.d, ::a.b.c.d, NAT64 64:ff9b::/96), if any. */
+function embeddedV4(v6) {
+  const words = expand(v6)
+  if (!words) return null
+  const head = words.slice(0, 6).map(w => w.toString(16)).join(':')
+  const tail = words.slice(6)
+  const v4 = () => `${tail[0] >> 8}.${tail[0] & 255}.${tail[1] >> 8}.${tail[1] & 255}`
+  if (head === '0:0:0:0:0:ffff' || head === '0:0:0:0:0:0' || head === '64:ff9b:0:0:0:0') return v4()
+  if (words[0] === 0x64 && words[1] === 0xff9b && words[2] === 1) return v4() // 64:ff9b:1::/48 (local NAT64)
+  return null
+}
+function expand(v6) {
+  let text = v6
+  const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(text)
+  if (dotted) { const p = dotted[1].split('.').map(Number); text = text.slice(0, -dotted[1].length) + ((p[0] << 8) | p[1]).toString(16) + ':' + ((p[2] << 8) | p[3]).toString(16) }
+  const [l, r] = text.split('::')
+  const left = l ? l.split(':') : [], right = r !== undefined && r ? r.split(':') : []
+  const fill = r !== undefined ? Array(8 - left.length - right.length).fill('0') : []
+  const all = [...left, ...fill, ...right]
+  return all.length === 8 ? all.map(x => parseInt(x || '0', 16)) : null
+}
 function privateAddress(address) {
-  const value = address.toLowerCase().replace(/^::ffff:/, '')
-  if (net.isIPv4(value)) {
-    const [a, b] = value.split('.').map(Number)
-    return a === 0 || a === 10 || a === 127 || a >= 224 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a === 100 && b >= 64 && b <= 127
-  }
-  return value === '::' || value === '::1' || /^(fc|fd|fe[89ab])/.test(value)
+  const value = String(address || '').toLowerCase().replace(/^\[|\]$/g, '').split('%')[0]
+  if (net.isIPv4(value)) return V4.check(value, 'ipv4')
+  if (!net.isIPv6(value)) return true
+  const v4 = embeddedV4(value)
+  if (v4) return V4.check(v4, 'ipv4') || (value.startsWith('::') && !value.startsWith('::ffff:') && v4 === '0.0.0.0')
+  return V6.check(value, 'ipv6')
 }
 function domainAllowed(host, domains) {
   return domains.some(domain => domain.startsWith('*.') ? host.endsWith(domain.slice(1)) && host !== domain.slice(2) : host === domain.toLowerCase())

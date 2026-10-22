@@ -105,11 +105,20 @@ function findFolderArt(file) {
 }
 
 /** Reads one file into the library (new or changed). Returns the track id. */
-async function indexFile(file, { deezerId = null, stat = null } = {}) {
-  const db = getDB()
+async function indexFile(file, opts = {}) {
+  return (await prepareFile(file, opts))()
+}
+
+/** Reads the file's tags and cover (slow, async); returns its database write (fast). */
+async function prepareFile(file, { deezerId = null, stat = null } = {}) {
   stat = stat || await fsp.stat(file)
   const info = await readFile(file)
   const art = await saveArt(info, file).catch(() => null)
+  return () => writeTrack(file, stat, info, art, deezerId)
+}
+
+function writeTrack(file, stat, info, art, deezerId) {
+  const db = getDB()
   const id = idOf(file)
   const existing = db.prepare('SELECT id, added_at, liked, play_count, last_played, deezer_id FROM tracks WHERE path = ?').get(file)
   const row = {
@@ -155,30 +164,37 @@ function scan({ extraFolders = [] } = {}) {
       status.total = files.length
       const known = new Map(db.prepare('SELECT path, size, mtime FROM tracks').all().map(r => [r.path, r]))
       const present = new Set()
-      for (const file of files) {
-        present.add(file)
-        try {
-          const stat = await fsp.stat(file)
-          const k = known.get(file)
-          if (!k || k.size !== stat.size || k.mtime !== Math.round(stat.mtimeMs)) {
-            const { isNew } = await indexFile(file, { stat })
-            if (isNew) status.added++
-          }
-        } catch (error) {
-          status.errors++
-          if (status.errors <= 5) console.warn('[scan]', file, error.message)
-        }
-        status.done++
-        // Let the server answer requests during a long scan.
-        if (status.done % 25 === 0) await new Promise(r => setImmediate(r))
+      // Saved in batches: one commit per 25 files instead of one per file.
+      let pending = []
+      const flush = () => {
+        if (!pending.length) return
+        const batch = pending; pending = []
+        const write = w => { try { if (w().isNew) status.added++ } catch (error) { status.errors++; if (status.errors <= 5) console.warn('[scan]', error.message) } }
+        try { db.transaction(() => batch.forEach(write))() } catch { batch.forEach(write) }
       }
+      try {
+        for (const file of files) {
+          present.add(file)
+          try {
+            const stat = await fsp.stat(file)
+            const k = known.get(file)
+            if (!k || k.size !== stat.size || k.mtime !== Math.round(stat.mtimeMs)) pending.push(await prepareFile(file, { stat }))
+          } catch (error) {
+            status.errors++
+            if (status.errors <= 5) console.warn('[scan]', file, error.message)
+          }
+          status.done++
+          // Let the server answer requests during a long scan.
+          if (status.done % 25 === 0) { flush(); await new Promise(r => setImmediate(r)) }
+        }
+      } finally { flush() }
       // Songs whose file is gone (only inside folders that were scanned).
       const inScanned = p => roots.some(r => p === r || p.startsWith(r.endsWith(path.sep) ? r : r + path.sep))
-      for (const r of known.keys()) {
-        if (!present.has(r) && inScanned(r) && !fs.existsSync(r)) {
-          db.prepare('DELETE FROM tracks WHERE path = ?').run(r)
-          status.removed++
-        }
+      const gone = [...known.keys()].filter(r => !present.has(r) && inScanned(r) && !fs.existsSync(r))
+      if (gone.length) {
+        const del = db.prepare('DELETE FROM tracks WHERE path = ?')
+        db.transaction(() => { for (const r of gone) del.run(r) })()
+        status.removed += gone.length
       }
     } finally {
       status.scanning = false
@@ -212,7 +228,7 @@ function tracks({ sort = 'added', q = '', liked = false, limit = 500, offset = 0
   for (const w of words(q)) { where.push(`(title LIKE ? ESCAPE '\\' OR artist LIKE ? ESCAPE '\\' OR album LIKE ? ESCAPE '\\')`); params.push(like(w), like(w), like(w)) }
   if (liked) where.push('liked = 1')
   if (sort === 'recent') where.push('last_played IS NOT NULL')
-  const sql = `SELECT ${TRACK_FIELDS} FROM tracks ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY ${SORTS[sort] || SORTS.added} LIMIT ? OFFSET ?`
+  const sql = `SELECT ${TRACK_FIELDS} FROM tracks ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY ${Object.hasOwn(SORTS, sort) ? SORTS[sort] : SORTS.added} LIMIT ? OFFSET ?`
   return getDB().prepare(sql).all(...params, Math.min(Number(limit) || 500, 5000), Number(offset) || 0)
 }
 
@@ -221,7 +237,7 @@ function albums({ q = '' } = {}) {
   let where = 'album IS NOT NULL'
   for (const w of words(q)) { where += ` AND (album LIKE ? ESCAPE '\\' OR artist LIKE ? ESCAPE '\\' OR album_artist LIKE ? ESCAPE '\\')`; params.push(like(w), like(w), like(w)) }
   return getDB().prepare(`SELECT album, COALESCE(album_artist, artist) AS artist, MIN(year) AS year, COUNT(*) AS count,
-      MAX(added_at) AS added_at, (SELECT id FROM tracks t2 WHERE t2.album = t.album AND COALESCE(t2.album_artist, t2.artist) = COALESCE(t.album_artist, t.artist) AND t2.art IS NOT NULL LIMIT 1) AS art_id
+      MAX(added_at) AS added_at, MIN(CASE WHEN art IS NOT NULL THEN id END) AS art_id
     FROM tracks t WHERE ${where} GROUP BY album COLLATE NOCASE, COALESCE(album_artist, artist) COLLATE NOCASE ORDER BY MAX(added_at) DESC`).all(...params)
 }
 

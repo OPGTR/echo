@@ -67,6 +67,16 @@ public class EchoNativePlugin extends Plugin {
         return result;
     }
 
+    /** Downloads queued: keep the app awake until they're done (screen locked included). */
+    @PluginMethod
+    public void keepDownloading(PluginCall call) {
+        Integer port = call.getInt("port");
+        String token = call.getString("token");
+        if (port == null || port <= 0) { call.reject("port"); return; }
+        DownloadService.start(getContext(), port, token);
+        call.resolve();
+    }
+
     @PluginMethod
     public void storageAccess(PluginCall call) {
         call.resolve(accessState());

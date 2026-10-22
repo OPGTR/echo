@@ -2,7 +2,10 @@
 // source's state. The player has its own store (player.js).
 import { create } from 'zustand'
 import { api } from './api'
-import { scanFiles } from './native'
+import { scanFiles, keepDownloading } from './native'
+
+const ACTIVE = ['queued', 'downloading', 'saving']
+let keptAwake = false
 
 export const DEFAULT_PREFS = {
   theme: 'indigo', // indigo | glass | luce | material | fixed
@@ -23,6 +26,7 @@ export const useApp = create((set, get) => ({
   selection: null, // several songs picked by a long press: { items: { key: song }, all: [songs], playlistId }
   dialog: null, // an Écho window asking for a name or a color: { kind: 'text' | 'color', ..., resolve }
   downloads: [],
+  activeJobs: {}, // deezer_id -> its download while queued or running
   source: null,
   libraryVersion: 0,
   prefs: DEFAULT_PREFS,
@@ -81,8 +85,18 @@ export const useApp = create((set, get) => ({
     try {
       const list = await api.downloads()
       const before = get().downloads
-      const finished = list.some(d => d.status === 'done' && before.find(b => b.id === d.id && b.status !== 'done'))
-      set({ downloads: list })
+      // Nothing changed: no new state, so no screen redraws.
+      if (JSON.stringify(list) === JSON.stringify(before)) return before
+      const was = new Map(before.map(b => [b.id, b.status]))
+      const finished = list.some(d => d.status === 'done' && was.has(d.id) && was.get(d.id) !== 'done')
+      // What each song row looks up (instead of searching the whole list).
+      const activeJobs = {}
+      for (const d of list) if (ACTIVE.includes(d.status) && !activeJobs[d.deezer_id]) activeJobs[d.deezer_id] = d
+      set({ downloads: list, activeJobs })
+      // Songs to download: the phone keeps Écho awake for them, screen locked too.
+      const busy = Object.keys(activeJobs).length > 0
+      if (busy && !keptAwake) keepDownloading()
+      keptAwake = busy
       if (finished) get().libraryChanged()
       return list
     } catch { return get().downloads }

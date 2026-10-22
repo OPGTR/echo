@@ -19,26 +19,23 @@ android {
     }
     signingConfigs {
         release {
-            // Your own key (GitHub secrets, see README.md), else the
-            // project's shared key so every build can update the previous one.
+            // Only the private key from GitHub secrets (see README.md). No
+            // fallback: the old shared key is public and must never sign alone
+            // again. Without the secret, a release build fails.
             def own = System.getenv("ECHO_KEYSTORE_FILE")
             if (own && file(own).exists()) {
                 storeFile file(own)
                 storePassword System.getenv("ECHO_KEYSTORE_PASSWORD")
                 keyAlias System.getenv("ECHO_KEY_ALIAS")
                 keyPassword System.getenv("ECHO_KEY_PASSWORD") ?: System.getenv("ECHO_KEYSTORE_PASSWORD")
-            } else {
-                storeFile file("../echo-shared.keystore")
-                storePassword "echo-android"
-                keyAlias "echo"
-                keyPassword "echo-android"
             }
         }
     }
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.release
+            // Unsigned without the secret key: the CI then refuses to publish it.
+            signingConfig (System.getenv("ECHO_KEYSTORE_FILE") ? signingConfigs.release : null)
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }

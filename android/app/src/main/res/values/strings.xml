@@ -4,4 +4,8 @@
     <string name="title_activity_main">Écho</string>
     <string name="package_name">com.opgtr.echo</string>
     <string name="custom_url_scheme">com.opgtr.echo</string>
+    <string name="dl_channel">Téléchargements</string>
+    <string name="dl_starting">Écho prépare les téléchargements</string>
+    <string name="dl_one">Écho télécharge 1 titre</string>
+    <string name="dl_many">Écho télécharge %1$d titres</string>
 </resources>

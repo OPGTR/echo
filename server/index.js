@@ -32,7 +32,7 @@ process.on('uncaughtException', e => console.error('[echo] uncaught:', e && e.st
 process.on('unhandledRejection', e => console.error('[echo] unhandled rejection:', e && e.stack || e))
 
 const { getDB } = require('./db')
-const { createApp, TOKEN } = require('./app')
+const { createApp, TOKEN, MEDIA_TOKEN } = require('./app')
 const downloads = require('./downloads')
 const library = require('./library')
 const { downloadDirs } = require('./paths')
@@ -53,7 +53,7 @@ server.on('error', e => console.error('[echo] server:', e.message))
 
 // The app learns where the server is and its secret.
 function announce() {
-  try { bridge?.channel?.send('echo-ready', JSON.stringify({ port: PORT, token: TOKEN })) } catch {}
+  try { bridge?.channel?.send('echo-ready', JSON.stringify({ port: PORT, token: TOKEN, mediaToken: MEDIA_TOKEN })) } catch {}
 }
 try {
   bridge?.channel?.addListener('echo-hello', announce)

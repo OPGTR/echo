@@ -115,6 +115,10 @@ onEngine(e => {
     useApp.getState().toast(t('« {title} » ne se lit pas.', { title: song.title }), { label: t('Suivant'), run: () => next() })
   } else if (e.type === 'cast') {
     set({ cast: { ...get().cast, casting: !!e.casting, device: e.casting ? get().cast.device : null } })
+    // On the TV, the song needs Écho's Wi-Fi address (and to be on the phone).
+    if (e.casting && e.reload) resumeOnTv(e)
+    // Casting over: the Wi-Fi server closes.
+    if (!e.casting && get().cast.base) { set({ cast: { ...get().cast, base: null } }); api.castStop().catch(() => {}) }
   }
 })
 
@@ -242,8 +246,17 @@ async function itemFor(song, { remote = false } = {}) {
  * screen is locked, so the player must have the whole list from the start.
  * A song picked from a search stays alone.
  */
+/** The songs the TV may fetch from the phone: the one playing and those coming next. */
+async function allowOnTv() {
+  const s = get()
+  if (!s.cast.base) return
+  const ids = s.queue.slice(Math.max(0, s.index), Math.max(0, s.index) + 301).map(x => x.local_id).filter(Boolean)
+  await api.castAllow(ids).catch(() => {})
+}
+
 async function queueNextInEngine() {
   const s = get()
+  await allowOnTv()
   if (s.index < 0 || s.repeat === 'one') { engine.setUpcoming([]); return }
   const after = s.queue.slice(s.index + 1)
   const ahead = (s.repeat === 'all' ? [...after, ...s.queue.slice(0, s.index + 1)] : after).slice(0, 300)
@@ -337,6 +350,7 @@ async function playAt(index, { autoplay = true, position = 0 } = {}) {
   if (!isCurrent() || !localId) return
   markLocal(keyOf(song), localId)
   listened = { id: localId, seconds: 0, last: 0 }
+  await allowOnTv()
   const item = await itemFor(get().queue[index])
   if (!isCurrent()) return
   try {
@@ -471,6 +485,7 @@ export async function castTo(device) {
     const s = get()
     const song = current()
     if (song?.local_id) {
+      await allowOnTv()
       const item = await itemFor(song)
       await engine.load(item, null, { play: s.playing, position: engine.position })
       queueNextInEngine()
@@ -480,6 +495,38 @@ export async function castTo(device) {
     app.toast(e.message || String(e))
   }
 }
+/** Casting started (from Écho or from Android's own menu): the song goes on, on the TV. */
+let tvResuming = false
+async function resumeOnTv(e) {
+  if (tvResuming) return
+  tvResuming = true
+  try {
+    if (!get().cast.base) {
+      const { ip } = await lanAddress()
+      if (!ip) throw new Error(t('Connecte le téléphone au Wi-Fi pour diffuser.'))
+      const { base } = await api.castStart(ip)
+      set({ cast: { ...get().cast, base } })
+    }
+    let song = current()
+    if (!song) return
+    const key = keyOf(song)
+    if (!song.local_id) {
+      useApp.getState().toast(t('« {title} » se télécharge, puis passe sur la TV.', { title: song.title }))
+      const id = await ensureLocal(song, () => current() && keyOf(current()) === key)
+      if (!id) return
+      markLocal(key, id)
+      song = current()
+      if (!song || keyOf(song) !== key) return
+    }
+    await allowOnTv()
+    const item = await itemFor(song)
+    await engine.load(item, null, { play: e.wants !== false, position: e.position || 0 })
+    queueNextInEngine()
+  } catch (err) {
+    useApp.getState().toast(err?.message || String(err))
+  } finally { tvResuming = false }
+}
+
 export async function stopCasting() {
   await engine.castDisconnect()
   set({ cast: { ...get().cast, device: null, casting: false } })

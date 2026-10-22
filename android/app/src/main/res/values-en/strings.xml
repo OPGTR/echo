@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="dl_channel">Downloads</string>
+    <string name="dl_starting">Écho is getting downloads ready</string>
+    <string name="dl_one">Écho is downloading 1 song</string>
+    <string name="dl_many">Écho is downloading %1$d songs</string>
+</resources>

@@ -17,9 +17,21 @@ const dislikes = require('./dislikes')
 const lyrics = require('./lyrics')
 const updates = require('./update')
 const http = require('http')
+const net = require('net')
 const { version } = require('./version')
 
 const TOKEN = process.env.ECHO_TOKEN || crypto.randomBytes(24).toString('hex')
+// A second secret, only to listen and see covers: it's in the addresses given
+// to the phone's player and media session, which other apps can read. The
+// main secret only travels in a header and never in an address.
+const MEDIA_TOKEN = process.env.ECHO_MEDIA_TOKEN || crypto.randomBytes(24).toString('hex')
+const MEDIA_ROUTE = /^\/(stream|art|play)\/[^/]+$/
+/** Same secret? Compared as bytes, in constant time (no error on odd input). */
+function sameSecret(given, secret) {
+  if (typeof given !== 'string') return false
+  const a = Buffer.from(given), b = Buffer.from(secret)
+  return a.length === b.length && crypto.timingSafeEqual(a, b)
+}
 
 function createApp() {
   const app = express()
@@ -38,8 +50,8 @@ function createApp() {
   app.use('/api', (req, res, next) => {
     if (req.path === '/health') return next()
     if (process.env.ECHO_DEV === '1') return next()
-    const token = req.get('x-echo-token') || req.query.t
-    if (typeof token === 'string' && token.length === TOKEN.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(TOKEN))) return next()
+    if (sameSecret(req.get('x-echo-token'), TOKEN)) return next()
+    if ((req.method === 'GET' || req.method === 'HEAD') && MEDIA_ROUTE.test(req.path) && sameSecret(req.query.t, MEDIA_TOKEN)) return next()
     res.status(401).json({ error: 'unauthorized' })
   })
 
@@ -189,32 +201,65 @@ function createApp() {
   // Casting: a TV or a speaker on the Wi-Fi plays from a second, LAN-facing
   // server that only serves audio and covers, with its own secret, and only
   // while casting.
+  // Only the songs sent to the TV, only to devices on the local network, and
+  // it closes by itself after a while without any request.
   let cast = null
+  const CAST_IDLE_MS = 20 * 60 * 1000
+  const stopCast = () => { if (cast) { clearTimeout(cast.timer); cast.server.close(); cast = null } }
+  const castAlive = () => { if (!cast) return; clearTimeout(cast.timer); cast.timer = setTimeout(stopCast, CAST_IDLE_MS); cast.timer.unref?.() }
+  const localClient = address => {
+    const a = String(address || '').toLowerCase().replace(/^::ffff:/, '')
+    if (net.isIPv4(a)) { const [x, y] = a.split('.').map(Number); return x === 10 || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168) || x === 127 || (x === 169 && y === 254) }
+    return /^(fe[89ab]|fc|fd)/.test(a) || a === '::1'
+  }
   app.post('/api/cast/start', wrap(async req => {
     const ip = String(req.body?.ip || '')
     if (!/^(10|172|192)\.[\d.]+$/.test(ip)) throw Object.assign(new Error('no Wi-Fi address'), { status: 400 })
     if (!cast) {
       const secret = crypto.randomBytes(16).toString('hex')
+      const allowed = new Set()
       const lan = express()
-      lan.use((rq, rs, next) => { rs.set('Access-Control-Allow-Origin', '*'); next() })
-      lan.get(`/c/${secret}/stream/:id`, streamTrack)
-      lan.get(`/c/${secret}/art/:id`, sendArt)
+      lan.use((rq, rs, next) => {
+        if (!localClient(rq.socket.remoteAddress)) return rs.status(403).end()
+        castAlive()
+        rs.set('Access-Control-Allow-Origin', '*')
+        next()
+      })
+      const onlySent = (rq, rs, next) => (allowed.has(rq.params.id) ? next() : rs.status(404).end())
+      lan.get(`/c/${secret}/stream/:id`, onlySent, streamTrack)
+      lan.get(`/c/${secret}/art/:id`, onlySent, sendArt)
       lan.use((rq, rs) => rs.status(404).end())
       const server = http.createServer(lan)
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '0.0.0.0', resolve) })
-      cast = { server, secret }
+      cast = { server, secret, allowed, timer: null }
     }
+    castAlive()
     return { base: `http://${ip}:${cast.server.address().port}/c/${cast.secret}` }
   }))
-  app.post('/api/cast/stop', wrap(() => { if (cast) { cast.server.close(); cast = null } return { ok: true } }))
+  /** The songs the TV may fetch: the one playing and those coming next. */
+  app.post('/api/cast/allow', wrap(req => {
+    if (!cast) return { ok: false }
+    cast.allowed.clear()
+    for (const id of (Array.isArray(req.body?.ids) ? req.body.ids : []).slice(0, 400)) cast.allowed.add(String(id))
+    castAlive()
+    return { ok: true, count: cast.allowed.size }
+  }))
+  app.post('/api/cast/stop', wrap(() => { stopCast(); return { ok: true } }))
 
   // --------------------------------------------------- catalogue + for you
   // Songs from the catalogue you already have get their library id.
-  function markOwned(songs) {
+  // The library's lookups, rebuilt only after the database changed.
+  let owned = null
+  function ownedIndex() {
     const db = getDB()
+    const stamp = db.prepare('SELECT total_changes() AS n').get().n
+    if (owned?.stamp === stamp) return owned
     const rows = db.prepare('SELECT id, deezer_id, artist, title, art IS NOT NULL AS has_art FROM tracks').all()
-    const byDeezer = new Map(rows.filter(r => r.deezer_id).map(r => [r.deezer_id, r]))
-    const byKey = new Map(rows.map(r => [songKey(r.artist, r.title), r]))
+    owned = { stamp, byDeezer: new Map(rows.filter(r => r.deezer_id).map(r => [r.deezer_id, r])), byKey: new Map(rows.map(r => [songKey(r.artist, r.title), r])) }
+    return owned
+  }
+  function markOwned(songs) {
+    const { byDeezer, byKey } = ownedIndex()
     for (const s of songs || []) {
       if (!s || s.local_id) continue
       const own = byDeezer.get(s.deezer_id) || byKey.get(songKey(s.artist, s.title))
@@ -320,7 +365,12 @@ function createApp() {
     app.use(express.static(process.env.ECHO_UI_DIR))
     app.get('*', (req, res) => res.sendFile(path.join(process.env.ECHO_UI_DIR, 'index.html')))
   }
+  // No stack traces or internal paths in error answers.
+  app.use((error, req, res, next) => {
+    if (res.headersSent) return next(error)
+    res.status(error.status || error.statusCode || 500).json({ error: error.expose ? error.message : 'server error' })
+  })
   return app
 }
 
-module.exports = { createApp, TOKEN }
+module.exports = { createApp, TOKEN, MEDIA_TOKEN }

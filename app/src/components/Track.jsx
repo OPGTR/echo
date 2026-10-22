@@ -37,9 +37,12 @@ export function StateMark({ song, progress = null, size = 22 }) {
 
 export function Cover({ song, className = 'cover', size }) {
   const src = coverOf(song)
-  const [broken, setBroken] = React.useState(false)
+  // Remembered per picture: the mini player keeps this component from song to
+  // song, and one missing cover used to hide every next one.
+  const [brokenSrc, setBrokenSrc] = React.useState(null)
+  const broken = brokenSrc === src
   if (!src || broken) return <div className={className} style={{ display: 'grid', placeItems: 'center', color: 'var(--faint)', ...(size ? { width: size, height: size } : {}) }}><Music2 size={18} /></div>
-  return <img className={className} src={src} alt="" loading="lazy" decoding="async" onError={() => setBroken(true)} style={size ? { width: size, height: size } : undefined} />
+  return <img className={className} src={src} alt="" loading="lazy" decoding="async" onError={() => setBrokenSrc(src)} style={size ? { width: size, height: size } : undefined} />
 }
 
 /** The song's menu (the ⋮ button, or a long press). */
@@ -157,7 +160,7 @@ export function Marked({ text, q }) {
 
 export function TrackRow({ song, onPlay, number = null, showCover = true, menu = null, group = null, playlistId = null, highlight = '' }) {
   const isCurrent = usePlayer(s => { const c = s.queue[s.index]; return !!c && keyOf(c) === keyOf(song) })
-  const job = useApp(s => (!song.local_id && song.deezer_id ? s.downloads.find(d => d.deezer_id === String(song.deezer_id) && ['queued', 'downloading', 'saving'].includes(d.status)) : null))
+  const job = useApp(s => (!song.local_id && song.deezer_id ? s.activeJobs[String(song.deezer_id)] || null : null))
   const key = selKey(song)
   const selecting = useApp(s => !!s.selection)
   const picked = useApp(s => !!s.selection?.items[key])

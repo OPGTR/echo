@@ -1,8 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path name="my_images" path="." />
-    <cache-path name="my_cache_images" path="." />
-    <!-- Écho's updates, downloaded by its server into the app's files -->
+    <!-- Only Écho's own files: its updates, downloaded by its server, are installed from there. -->
     <files-path name="files" path="." />
-    <external-files-path name="external_files" path="." />
 </paths>

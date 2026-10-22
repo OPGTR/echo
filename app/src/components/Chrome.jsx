@@ -51,6 +51,16 @@ export function RingPlay({ big = false }) {
   )
 }
 
+/** A panel from the bottom (menu, queue, devices, a question): swipe it down to close it, like the player. */
+function SwipeSheet({ onClose, as: Tag = 'div', className = 'sheet', children, ...props }) {
+  const swipe = useSwipeDown(onClose, { limit: 90, ignore: 'input, textarea, select, [role=slider], .dlg-track' })
+  return (
+    <Tag ref={swipe.ref} className={className} onClick={e => e.stopPropagation()} onTouchStart={swipe.onTouchStart} onTouchMove={swipe.onTouchMove} onTouchEnd={swipe.onTouchEnd} {...props}>
+      {children}
+    </Tag>
+  )
+}
+
 /**
  * Follows a finger dragging down: the element moves with it, and past
  * `limit` px (or a quick flick) `onClose` runs. Taps still go through.
@@ -63,6 +73,8 @@ function useSwipeDown(onClose, { limit = 110, ignore = 'input, .k-lines' } = {})
     ref,
     onTouchStart: e => {
       if (e.touches.length !== 1 || e.target.closest(ignore)) { drag.current = null; return }
+      // Inside something scrolled down (a long menu): the finger scrolls it back up first.
+      for (let el = e.target; el && el !== ref.current?.parentElement; el = el.parentElement) if (el.scrollTop > 0) { drag.current = null; return }
       drag.current = { y: e.touches[0].clientY, x: e.touches[0].clientX, at: Date.now(), dy: 0, on: false }
     },
     onTouchMove: e => {
@@ -282,7 +294,7 @@ function CastSheet({ onClose }) {
   const onPhone = !cast.casting
   return (
     <div className="scrim" onClick={onClose}>
-      <div className="sheet" onClick={e => e.stopPropagation()} role="dialog" aria-label={t('Écouter sur')}>
+      <SwipeSheet onClose={onClose} role="dialog" aria-label={t('Écouter sur')}>
         <div className="grab" />
         <h3>{t('Écouter sur')}</h3>
         <div className="sheet-sub">{t('Appareils sur le même Wi-Fi que ton téléphone')}</div>
@@ -304,7 +316,7 @@ function CastSheet({ onClose }) {
           )
         })}
         {devices && !devices.length && <p className="note" style={{ marginTop: 10 }}>{t('Aucune TV ni enceinte trouvée. Vérifie qu’elle est allumée et sur le même Wi-Fi.')}</p>}
-      </div>
+      </SwipeSheet>
     </div>
   )
 }
@@ -315,7 +327,7 @@ function QueueSheet({ onClose }) {
   const upNext = queue.map((song, i) => ({ song, i })).filter(x => x.i > index).slice(0, 200)
   return (
     <div className="scrim" onClick={onClose}>
-      <div className="sheet" onClick={e => e.stopPropagation()} role="dialog" aria-label={t('File d’attente')}>
+      <SwipeSheet onClose={onClose} role="dialog" aria-label={t('File d’attente')}>
         <div className="grab" />
         <h3>{t('À suivre')}</h3>
         {!upNext.length && <p className="note">{t('Rien après ce titre.')}</p>}
@@ -331,7 +343,7 @@ function QueueSheet({ onClose }) {
             </div>
           ))}
         </div>
-      </div>
+      </SwipeSheet>
     </div>
   )
 }
@@ -342,7 +354,7 @@ export function ActionSheet() {
   if (!sheet) return null
   return (
     <div className="scrim" onClick={close}>
-      <div className="sheet" onClick={e => e.stopPropagation()} role="dialog" aria-label={sheet.title}>
+      <SwipeSheet onClose={close} role="dialog" aria-label={sheet.title}>
         <div className="grab" />
         {sheet.stack ? (
           <div className="sheet-stack-head">
@@ -361,7 +373,7 @@ export function ActionSheet() {
           </button>
         ))}
         {sheet.footer}
-      </div>
+      </SwipeSheet>
     </div>
   )
 }
@@ -417,7 +429,7 @@ export function Dialog() {
   const ok = () => close(dialog.kind === 'text' ? (text.trim() || dialog.value || '') : dialog.kind === 'color' ? hex : true)
   return (
     <div className="scrim" onClick={() => close(null)}>
-      <form className="sheet dlg" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={dialog.title} onSubmit={e => { e.preventDefault(); ok() }}>
+      <SwipeSheet as="form" className="sheet dlg" onClose={() => close(null)} role="dialog" aria-modal="true" aria-label={dialog.title} onSubmit={e => { e.preventDefault(); ok() }}>
         <div className="grab" />
         {dialog.kind === 'color' ? (
           <div className="dlg-color-head">
@@ -450,7 +462,7 @@ export function Dialog() {
           <button type="button" className="btn quiet" onClick={() => close(null)}>{t('Annuler')}</button>
           <button type="submit" className={`btn ${dialog.danger ? 'danger' : ''}`} style={dialog.kind === 'color' ? { background: hex, color: hsl.l > 0.55 ? '#141414' : '#fff' } : undefined}>{dialog.confirm || t('OK')}</button>
         </div>
-      </form>
+      </SwipeSheet>
     </div>
   )
 }

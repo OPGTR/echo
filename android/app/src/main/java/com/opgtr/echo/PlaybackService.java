@@ -18,6 +18,7 @@ import androidx.media3.cast.CastPlayer;
 import androidx.media3.cast.SessionAvailabilityListener;
 import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
+import androidx.media3.common.DeviceInfo;
 import androidx.media3.common.ForwardingPlayer;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
@@ -37,7 +38,9 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import com.google.android.gms.cast.Cast;
 import com.google.android.gms.cast.framework.CastContext;
+import com.google.android.gms.cast.framework.CastSession;
 
 import org.json.JSONObject;
 
@@ -93,7 +96,13 @@ public class PlaybackService extends MediaLibraryService {
         String id, url, castUrl, mime, title, artist, album, artwork, castArtwork;
         long durationMs;
 
+        /** True when a TV / Google Nest can fetch it (Écho's Wi-Fi address, not 127.0.0.1). */
+        boolean castable() { return castUrl != null && !castUrl.isEmpty(); }
+
+        /** null for the TV when it can't be cast (see castable()). */
+        @Nullable
         MediaItem toMediaItem(boolean forCast) {
+            if (forCast && !castable()) return null;
             MediaMetadata.Builder meta = new MediaMetadata.Builder()
                 .setTitle(title)
                 .setArtist(artist)
@@ -105,7 +114,9 @@ public class PlaybackService extends MediaLibraryService {
                 .setMediaId(id == null ? "" : id)
                 .setUri(forCast && castUrl != null ? castUrl : url)
                 .setMediaMetadata(meta.build());
+            // The Cast receiver needs a type: without one, CastPlayer threw and the app closed.
             if (mime != null) b.setMimeType(mime);
+            else if (forCast) b.setMimeType("audio/flac");
             return b.build();
         }
     }
@@ -184,24 +195,55 @@ public class PlaybackService extends MediaLibraryService {
 
     // ------------------------------------------------------------ controls
     /** The notification's previous/next go to the app (it holds the queue). */
+    @SuppressWarnings("deprecation")
+    static final int[] VOLUME_COMMANDS = {
+        Player.COMMAND_GET_DEVICE_VOLUME, Player.COMMAND_SET_DEVICE_VOLUME, Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS,
+        Player.COMMAND_ADJUST_DEVICE_VOLUME, Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS,
+    };
+
     private final class AppControlledPlayer extends ForwardingPlayer {
         AppControlledPlayer(Player player) { super(player); }
 
         @NonNull
         @Override
         public Commands getAvailableCommands() {
-            return super.getAvailableCommands().buildUpon()
+            Commands.Builder b = super.getAvailableCommands().buildUpon()
                 .add(COMMAND_SEEK_TO_NEXT).add(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
-                .add(COMMAND_SEEK_TO_PREVIOUS).add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
-                .build();
+                .add(COMMAND_SEEK_TO_PREVIOUS).add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM);
+            if (remote()) b.addAll(VOLUME_COMMANDS);
+            return b.build();
         }
 
         @Override
         public boolean isCommandAvailable(int command) {
+            if (remote()) for (int c : VOLUME_COMMANDS) if (c == command) return true;
             return command == COMMAND_SEEK_TO_NEXT || command == COMMAND_SEEK_TO_NEXT_MEDIA_ITEM
                 || command == COMMAND_SEEK_TO_PREVIOUS || command == COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM
                 || super.isCommandAvailable(command);
         }
+
+        private boolean remote() { return getWrappedPlayer() == castPlayer && castPlayer != null; }
+        private int castVolume() { CastSession c = castSession(); return c == null ? 0 : (int) Math.round(c.getVolume() * CAST_STEPS); }
+
+        @Override public void addListener(@NonNull Player.Listener l) { super.addListener(l); volumeListeners.add(l); }
+        @Override public void removeListener(@NonNull Player.Listener l) { super.removeListener(l); volumeListeners.remove(l); }
+
+        @NonNull
+        @Override
+        public DeviceInfo getDeviceInfo() {
+            if (!remote()) return super.getDeviceInfo();
+            return new DeviceInfo.Builder(DeviceInfo.PLAYBACK_TYPE_REMOTE).setMinVolume(0).setMaxVolume(CAST_STEPS).build();
+        }
+        @Override public int getDeviceVolume() { return remote() ? castVolume() : super.getDeviceVolume(); }
+        @Override public boolean isDeviceMuted() { CastSession c = castSession(); return remote() ? c != null && c.isMute() : super.isDeviceMuted(); }
+        @SuppressWarnings("deprecation") @Override public void setDeviceVolume(int volume) { if (remote()) setCastVolume(volume / (double) CAST_STEPS, null); else super.setDeviceVolume(volume); }
+        @Override public void setDeviceVolume(int volume, int flags) { if (remote()) setCastVolume(volume / (double) CAST_STEPS, null); else super.setDeviceVolume(volume, flags); }
+        @SuppressWarnings("deprecation") @Override public void increaseDeviceVolume() { if (remote()) setCastVolume((castVolume() + 1) / (double) CAST_STEPS, null); else super.increaseDeviceVolume(); }
+        @Override public void increaseDeviceVolume(int flags) { if (remote()) setCastVolume((castVolume() + 1) / (double) CAST_STEPS, null); else super.increaseDeviceVolume(flags); }
+        @SuppressWarnings("deprecation") @Override public void decreaseDeviceVolume() { if (remote()) setCastVolume((castVolume() - 1) / (double) CAST_STEPS, null); else super.decreaseDeviceVolume(); }
+        @Override public void decreaseDeviceVolume(int flags) { if (remote()) setCastVolume((castVolume() - 1) / (double) CAST_STEPS, null); else super.decreaseDeviceVolume(flags); }
+        @SuppressWarnings("deprecation") @Override public void setDeviceMuted(boolean muted) { if (remote()) setCastVolume(0, muted); else super.setDeviceMuted(muted); }
+        @Override public void setDeviceMuted(boolean muted, int flags) { if (remote()) setCastVolume(0, muted); else super.setDeviceMuted(muted, flags); }
 
         @Override public void seekToNext() { goNext(); }
         @Override public void seekToNextMediaItem() { goNext(); }
@@ -281,16 +323,29 @@ public class PlaybackService extends MediaLibraryService {
     };
 
     // -------------------------------------------------------------- queue
+    /** The player's items, in order; on the TV, up to the first one it can't fetch. */
+    static List<MediaItem> mediaItems(List<Item> from, boolean cast) {
+        List<MediaItem> list = new ArrayList<>();
+        for (Item i : from) {
+            MediaItem m = i.toMediaItem(cast);
+            if (m == null) break;
+            list.add(m);
+        }
+        return list;
+    }
+
     void load(Item current, @Nullable Item next, long positionMs, boolean play) {
         items.clear();
         items.add(current);
         if (next != null) items.add(next);
         boolean cast = active == castPlayer && castPlayer != null;
-        List<MediaItem> list = new ArrayList<>();
-        for (Item i : items) list.add(i.toMediaItem(cast));
-        active.setMediaItems(list, 0, Math.max(0, positionMs));
-        active.prepare();
-        active.setPlayWhenReady(play);
+        List<MediaItem> list = mediaItems(items, cast);
+        if (list.isEmpty()) { emit("cast", castStatus(true)); return; }
+        try {
+            active.setMediaItems(list, 0, Math.max(0, positionMs));
+            active.prepare();
+            active.setPlayWhenReady(play);
+        } catch (RuntimeException e) { Log.w(TAG, "load: " + e.getMessage()); }
     }
 
     /**
@@ -305,9 +360,9 @@ public class PlaybackService extends MediaLibraryService {
         int index = active.getCurrentMediaItemIndex();
         if (count > index + 1) active.removeMediaItems(index + 1, count);
         if (items.isEmpty() || next == null) return;
-        List<MediaItem> list = new ArrayList<>();
-        for (Item i : next) { items.add(i); list.add(i.toMediaItem(cast)); }
-        active.addMediaItems(list);
+        items.addAll(next);
+        List<MediaItem> list = mediaItems(next, cast);
+        try { if (!list.isEmpty()) active.addMediaItems(list); } catch (RuntimeException e) { Log.w(TAG, "upcoming: " + e.getMessage()); }
     }
 
     /** The song after the current one changed (or is now on the phone). */
@@ -319,7 +374,8 @@ public class PlaybackService extends MediaLibraryService {
         if (count > index + 1) active.removeMediaItems(index + 1, count);
         if (next != null && !items.isEmpty()) {
             items.add(next);
-            active.addMediaItem(next.toMediaItem(cast));
+            MediaItem m = next.toMediaItem(cast);
+            try { if (m != null) active.addMediaItem(m); } catch (RuntimeException e) { Log.w(TAG, "next: " + e.getMessage()); }
         }
     }
 
@@ -359,17 +415,70 @@ public class PlaybackService extends MediaLibraryService {
         }
         active = target;
         session.setPlayer(new AppControlledPlayer(target));
+        boolean cast = target == castPlayer;
+        // The song playing can't go to the TV as it is (a song still to
+        // download, or the cast address not ready): the app reloads it.
+        boolean reload = false;
         if (!items.isEmpty()) {
-            boolean cast = target == castPlayer;
-            List<MediaItem> list = new ArrayList<>();
-            for (Item i : items) list.add(i.toMediaItem(cast));
-            target.setMediaItems(list, 0, position == C.TIME_UNSET ? 0 : position);
-            target.prepare();
-            target.setPlayWhenReady(playing);
+            List<MediaItem> list = mediaItems(items, cast);
+            if (list.isEmpty()) reload = true;
+            else {
+                try {
+                    target.setMediaItems(list, 0, position == C.TIME_UNSET ? 0 : position);
+                    target.prepare();
+                    target.setPlayWhenReady(playing);
+                } catch (RuntimeException e) { Log.w(TAG, "switch: " + e.getMessage()); reload = true; }
+            }
         }
-        JSONObject o = status();
-        try { o.put("casting", target == castPlayer); } catch (Exception ignored) {}
+        if (cast) watchCastVolume();
+        JSONObject o = castStatus(reload);
+        try { o.put("position", position == C.TIME_UNSET ? 0 : position / 1000.0); o.put("wants", playing); } catch (Exception ignored) {}
         emit("cast", o);
+    }
+
+    private JSONObject castStatus(boolean reload) {
+        JSONObject o = status();
+        try { o.put("casting", active != null && active == castPlayer); o.put("reload", reload); } catch (Exception ignored) {}
+        return o;
+    }
+
+    // ------------------------------------------------- the TV's volume
+    // The phone's volume buttons change the Google Nest / TV volume while
+    // casting: the session tells Android the playback is remote, with this
+    // volume (CastPlayer 1.5 doesn't).
+    static final int CAST_STEPS = 20;
+    private final List<Player.Listener> volumeListeners = new ArrayList<>();
+    private CastSession watched;
+    private final Cast.Listener castVolume = new Cast.Listener() {
+        @Override public void onVolumeChanged() {
+            CastSession c = castSession();
+            if (c == null) return;
+            int v = (int) Math.round(c.getVolume() * CAST_STEPS);
+            boolean m = c.isMute();
+            for (Player.Listener l : new ArrayList<>(volumeListeners)) l.onDeviceVolumeChanged(v, m);
+        }
+    };
+
+    @Nullable
+    CastSession castSession() {
+        try { return CastContext.getSharedInstance(this).getSessionManager().getCurrentCastSession(); } catch (Exception e) { return null; }
+    }
+
+    private void watchCastVolume() {
+        CastSession c = castSession();
+        if (c == null || c == watched) return;
+        try { if (watched != null) watched.removeCastListener(castVolume); } catch (Exception ignored) {}
+        watched = c;
+        try { c.addCastListener(castVolume); } catch (Exception ignored) {}
+    }
+
+    void setCastVolume(double v, @Nullable Boolean mute) {
+        CastSession c = castSession();
+        if (c == null) return;
+        try {
+            if (mute != null) c.setMute(mute);
+            else c.setVolume(Math.max(0, Math.min(1, v)));
+        } catch (Exception e) { Log.w(TAG, "cast volume: " + e.getMessage()); }
     }
 
     boolean isCasting() { return active != null && active == castPlayer; }
@@ -494,7 +603,8 @@ public class PlaybackService extends MediaLibraryService {
             for (MediaItem m : mediaItems) {
                 Item i = find(m.mediaId);
                 if (i == null) continue;
-                out.add(i.toMediaItem(isCasting()));
+                MediaItem forPlayer = i.toMediaItem(isCasting());
+                out.add(forPlayer != null ? forPlayer : i.toMediaItem(false));
                 items.clear();
                 items.add(i);
                 emit("remote", jump(i.id));

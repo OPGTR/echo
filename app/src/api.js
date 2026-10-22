@@ -1,8 +1,12 @@
 // Talking to Écho's server (Node.js inside the app, on 127.0.0.1).
 let base = ''
 let token = ''
+let mediaToken = '' // only for listening and covers: it goes into addresses
 
-export function setServer(info) { base = info.base.replace(/\/$/, ''); token = info.token || '' }
+/** Where the server is and its secret (for the downloads service on the phone). */
+export const serverInfo = () => ({ base, token })
+
+export function setServer(info) { base = info.base.replace(/\/$/, ''); token = info.token || ''; mediaToken = info.mediaToken || '' }
 
 async function call(path, { method = 'GET', body } = {}) {
   const res = await fetch(`${base}/api${path}`, {
@@ -92,6 +96,7 @@ export const api = {
 
   castStart: ip => call('/cast/start', { method: 'POST', body: { ip } }),
   castStop: () => call('/cast/stop', { method: 'POST', body: {} }),
+  castAllow: ids => call('/cast/allow', { method: 'POST', body: { ids } }),
 
   sources: () => call('/sources'),
   installSourceId: id => call(`/sources/${encodeURIComponent(id)}/install`, { method: 'POST', body: {} }),
@@ -104,7 +109,7 @@ export const api = {
   verifyComplete: body => call('/source/verify-complete', { method: 'POST', body }),
 }
 
-const withToken = url => token ? `${url}${url.includes('?') ? '&' : '?'}t=${token}` : url
+const withToken = url => mediaToken ? `${url}${url.includes('?') ? '&' : '?'}t=${mediaToken}` : url
 export const streamUrl = id => withToken(`${base}/api/stream/${encodeURIComponent(id)}`)
 /** A catalogue song for the phone's player: downloaded by the server, then streamed. */
 export const playUrl = (song, { origin = null, ahead = [] } = {}) => withToken(`${base}/api/play/${encodeURIComponent(song.deezer_id)}?${new URLSearchParams({ title: song.title || '', artist: song.artist || '', album: song.album || '', duration: String(song.duration || ''), cover: song.cover || '', ...(origin ? { origin } : {}), ...(ahead.length ? { ahead: ahead.join(',') } : {}) })}`)

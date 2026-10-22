@@ -43,14 +43,14 @@ async function check({ build = 0, force = false } = {}) {
   const res = await fetch(RELEASE, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'Echo' } })
   if (!res.ok) throw new Error(`GitHub ${res.status}`)
   const rel = await res.json()
-  const apks = (rel.assets || []).map(a => ({ ...parseName(a.name), url: a.browser_download_url, size: a.size })).filter(a => a.build)
+  const apks = (rel.assets || []).map(a => ({ ...parseName(a.name), url: a.browser_download_url, size: a.size, digest: a.digest || null })).filter(a => a.build)
   const top = apks.reduce((m, a) => (a.build > (m?.build || 0) ? a : m), null)
   const value = {
     version: top?.version || null, build: top?.build || 0,
     notes: String(rel.body || '').slice(0, 4000),
     changes: readNotes(rel.body),
     title: rel.name || null,
-    assets: Object.fromEntries(apks.filter(a => a.build === top?.build).map(a => [a.abi, { url: a.url, size: a.size }])),
+    assets: Object.fromEntries(apks.filter(a => a.build === top?.build).map(a => [a.abi, { url: a.url, size: a.size, digest: a.digest || null }])),
   }
   cache = { at: Date.now(), value }
   return { ...value, available: value.build > Number(build || 0) }
@@ -71,8 +71,12 @@ async function download({ abi = 'arm64-v8a', build = 0 } = {}) {
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
       const total = Number(res.headers.get('content-length')) || asset.size || 0
       let done = 0
-      const counter = new (require('stream').Transform)({ transform(chunk, _, cb) { done += chunk.length; if (total) job.progress = Math.round(done / total * 100); cb(null, chunk) } })
+      // The file's fingerprint, checked against the one GitHub gives for it.
+      const hash = require('crypto').createHash('sha256')
+      const counter = new (require('stream').Transform)({ transform(chunk, _, cb) { done += chunk.length; hash.update(chunk); if (total) job.progress = Math.round(done / total * 100); cb(null, chunk) } })
       await pipeline(Readable.fromWeb(res.body), counter, fs.createWriteStream(file))
+      const want = /^sha256:([a-f0-9]{64})$/i.exec(String(asset.digest || ''))?.[1]?.toLowerCase()
+      if (want && hash.digest('hex') !== want) { fs.rmSync(file, { force: true }); throw new Error('Le fichier téléchargé ne correspond pas à la mise à jour publiée. Réessaie.') }
       job = { ...job, state: 'ready', progress: 100, file }
     } catch (e) {
       job = { ...job, state: 'error', error: e.message }

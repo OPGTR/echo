@@ -294,7 +294,15 @@ async function run(j, signal) {
   for (const source of chain) {
     if (errors.length) update(j.id, { message: `try:${source.name}`, progress: 0, error: failures(errors) })
     try {
-      artifact = await fromSource(source, j, meta, signal, u => { if (!signal.aborted && typeof u?.percent === 'number') update(j.id, { progress: Math.max(0, Math.min(99, u.percent)) }) })
+      // Progress saved at most every 400 ms (each save is a database commit).
+      let savedAt = 0
+      artifact = await fromSource(source, j, meta, signal, u => {
+        if (signal.aborted || typeof u?.percent !== 'number') return
+        const at = Date.now()
+        if (at - savedAt < 400) return
+        savedAt = at
+        update(j.id, { progress: Math.max(0, Math.min(99, u.percent)) })
+      })
       via = source
       break
     } catch (error) {

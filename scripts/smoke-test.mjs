@@ -33,7 +33,7 @@ let newRelease = false
 const deezer = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x')
   if (u.pathname === '/lrclib/get') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ syncedLyrics: '[00:01.00]Première ligne\n[00:02.50]Deuxième ligne', plainLyrics: 'Première ligne\nDeuxième ligne' })) }
-  if (u.pathname === '/release') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ body: 'Notes', assets: [{ name: 'Echo-0.0.2.5-arm64-v8a.apk', size: 4, browser_download_url: `http://127.0.0.1:${deezer.address().port}/apk` }, { name: 'network-report.txt', size: 1 }] })) }
+  if (u.pathname === '/release') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ body: 'Notes', assets: [{ name: 'Echo-0.0.2.5-arm64-v8a.apk', size: 4, digest: 'sha256:8dcc7e601606217f3b754766511182a916b17e9a26a94c9d887104eba92e9bb2', browser_download_url: `http://127.0.0.1:${deezer.address().port}/apk` }, { name: 'network-report.txt', size: 1 }] })) }
   if (u.pathname === '/apk') { res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': 4 }); return res.end('PK\u0003\u0004') }
   if (u.pathname === '/playlist/555') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ id: 555, title: 'Ma playlist Deezer', tracks: { data: [trackOf(27, 1), trackOf(27, 2)] } })) }
   const send = v => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(v)) }
@@ -321,6 +321,9 @@ try {
   const castInfo = await api('/cast/start', { ip: '192.168.1.50' })
   const castPort = Number(/:(\d+)\//.exec(castInfo.base || '')?.[1])
   const castPath = (castInfo.base || '').replace(/^http:\/\/[^/]+/, '')
+  const notSent = castPort && await fetch(`http://127.0.0.1:${castPort}${castPath}/stream/${by['Formation'].id}`)
+  ok('0.3.7: the TV only gets the songs sent to it', notSent?.status === 404, String(notSent?.status))
+  await api('/cast/allow', { ids: [by['Formation'].id] })
   const castRes = castPort && await fetch(`http://127.0.0.1:${castPort}${castPath}/stream/${by['Formation'].id}`)
   ok('casting: songs served on the Wi-Fi with their own secret', castRes?.ok && (await fetch(`http://127.0.0.1:${castPort}/c/wrong/stream/${by['Formation'].id}`)).status === 404, castInfo.base)
   await api('/cast/stop', {})

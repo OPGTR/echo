@@ -2,6 +2,7 @@
 // folders, the media notification. In a browser (development, tests) these
 // fall back to plain web equivalents.
 import { Capacitor, registerPlugin } from '@capacitor/core'
+import { serverInfo } from './api'
 
 export const isNative = Capacitor.isNativePlatform()
 export const EchoNative = registerPlugin('EchoNative')
@@ -20,7 +21,7 @@ export function connectServer({ timeoutMs = 90000 } = {}) {
   if (!isNative) {
     const params = new URLSearchParams(location.search)
     const base = params.get('server') || `${location.protocol}//${location.host}`
-    return Promise.resolve({ base, token: params.get('token') || '' })
+    return Promise.resolve({ base, token: params.get('token') || '', mediaToken: params.get('media') || '' })
   }
   return new Promise((resolve, reject) => {
     let done = false
@@ -32,7 +33,7 @@ export function connectServer({ timeoutMs = 90000 } = {}) {
           const info = JSON.parse(event.args[0])
           done = true
           clearTimeout(timer)
-          resolve({ base: `http://127.0.0.1:${info.port}`, token: info.token })
+          resolve({ base: `http://127.0.0.1:${info.port}`, token: info.token, mediaToken: info.mediaToken })
         } catch {}
       })
       await NodeJS.whenReady()
@@ -65,6 +66,13 @@ export async function musicAccess() {
 export async function requestMusicAccess() {
   if (!isNative) return { media: true }
   return EchoNative.requestMediaAccess()
+}
+/** Downloads waiting: the phone keeps Écho awake until they're done (screen locked too). */
+export async function keepDownloading() {
+  if (!isNative) return
+  const { base, token } = serverInfo()
+  const port = Number(new URL(base).port)
+  if (port) await EchoNative.keepDownloading({ port, token }).catch(() => {})
 }
 export async function openAppSettings() { if (isNative) await EchoNative.openAppSettings().catch(() => {}) }
 export async function pickFolder() {
