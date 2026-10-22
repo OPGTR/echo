@@ -78,7 +78,7 @@ jobs:
           # key ("MII..." is how every keystore starts in base64).
           clean=$(printf '%s' "$KEYSTORE_BASE64" | tr -d ' \r\n\t')
           case "$clean" in *MII*) clean="MII${clean#*MII}" ;; esac
-          echo "Clé : ${#KEYSTORE_BASE64} caractères reçus, ${#clean} gardés, début « ${clean:0:4} »"
+          echo "::notice::Clé : ${#KEYSTORE_BASE64} caractères reçus, ${#clean} gardés, début « ${clean:0:4} »"
           printf '%s' "$clean" | base64 -d > "$RUNNER_TEMP/echo.keystore" || { echo "::error::ECHO_KEYSTORE_BASE64 n'est pas un base64 valide."; exit 1; }
           # The password must open it, and the alias must be in it (only names are shown).
           if ! keytool -list -keystore "$RUNNER_TEMP/echo.keystore" -storepass "$KEYSTORE_PASSWORD" > "$RUNNER_TEMP/ks.txt" 2>&1; then
