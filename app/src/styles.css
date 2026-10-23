@@ -8,7 +8,7 @@
   --line: #353170;
   --text: #efecf9;
   --muted: #a29ec6;
-  --faint: #6d6898;
+  --faint: #9692c0;      /* readable: 4.5:1 on the background and on surfaces */
   --sodium: #f2c14e;     /* the one accent: warm street-lamp light */
   --sodium-ink: #2b1f00;
   --danger: #ff8b8b;
@@ -173,8 +173,11 @@ img { display: block; }
 .fetching { margin-top: 6px; color: var(--sodium); font-size: 13.5px; min-height: 19px; }
 
 /* ----------------------------------------------------------- sheets */
-.scrim { position: fixed; inset: 0; z-index: 50; background: rgba(8, 6, 24, .62); display: flex; flex-direction: column; justify-content: flex-end; animation: fade .16s ease; }
-.sheet { background: var(--deep); border-radius: 24px 24px 0 0; padding: 8px 20px calc(var(--bottom) + 16px); max-height: 86vh; overflow-y: auto; animation: rise .2s cubic-bezier(.2,.8,.2,1); }
+.scrim { --scrim: rgba(8, 6, 24, .62); position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; justify-content: flex-end; }
+/* The dimming, apart: it follows how far the panel is (opacity only). */
+.scrim-dim { position: absolute; inset: 0; background: var(--scrim); opacity: 0; pointer-events: none; }
+.scrim > .sheet { position: relative; z-index: 1; will-change: transform; }
+.sheet { background: var(--deep); border-radius: 24px 24px 0 0; padding: 8px 20px calc(var(--bottom) + 16px); max-height: 86vh; overflow-y: auto; }
 .sheet .grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 4px auto 12px; }
 .sheet h3 { margin: 0 0 6px; font-size: 18px; }
 .sheet .sheet-sub { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
@@ -504,7 +507,7 @@ img { display: block; }
    gives each pane its own lens, from its size and corners). */
 :root[data-theme='glass'] {
   --night: #0e0e11; --deep: #141418; --surface: rgba(255, 255, 255, .07); --line: rgba(255, 255, 255, .16);
-  --text: #ffffff; --muted: rgba(255, 255, 255, .64); --faint: rgba(255, 255, 255, .42);
+  --text: #ffffff; --muted: rgba(255, 255, 255, .64); --faint: rgba(255, 255, 255, .5);
   --sodium: #ffffff; --sodium-ink: #111111; --danger: #ff9b9b;
   --glass-bg: rgba(255, 255, 255, .06);
   --glass-edge: 1px solid rgba(255, 255, 255, .16);
@@ -535,7 +538,7 @@ img { display: block; }
 [data-theme='glass'] .player-bottom { margin-top: 8px; padding: 16px 18px 10px; border-radius: 30px; }
 [data-theme='glass'] .ring-play.big .ring-bg { fill: #fff; }
 [data-theme='glass'] .ring-play.big .ring-icon { color: #111 !important; }
-[data-theme='glass'] .scrim { background: rgba(0, 0, 0, .36); }
+[data-theme='glass'] .scrim { --scrim: rgba(0, 0, 0, .36); }
 [data-theme='glass'] .sheet { margin: 0 8px calc(var(--bottom) + 10px); border-radius: 30px; padding-bottom: 14px; }
 [data-theme='glass'] .sheet .grab { background: rgba(255, 255, 255, .5); }
 [data-theme='glass'] .sticky-top, [data-theme='glass'] .page-footer { background: transparent; }
@@ -549,7 +552,7 @@ img { display: block; }
 /* ================================================================== Luce */
 :root[data-theme='luce'] {
   --night: #111111; --deep: #161616; --surface: #232323; --line: #313131;
-  --text: #f2f0ec; --muted: #a9a6a1; --faint: #75726d;
+  --text: #f2f0ec; --muted: #a9a6a1; --faint: #94908a;
   --sodium: #f2a65a; --sodium-ink: #2a1a08;
   --font: 'Figtree Variable', 'Roboto', system-ui, sans-serif;
 }
@@ -601,7 +604,7 @@ img { display: block; }
 [data-theme='luce'] .sheet h3 { text-transform: uppercase; letter-spacing: .22em; font-size: 12.5px; font-weight: 600; color: #bdbab5; }
 [data-theme='luce'] .sheet .sheet-sub { color: var(--sodium); }
 [data-theme='luce'] .sheet-item.accent svg { color: var(--sodium); }
-[data-theme='luce'] .scrim { background: rgba(0, 0, 0, .55); }
+[data-theme='luce'] .scrim { --scrim: rgba(0, 0, 0, .55); }
 
 /* ================================================================== 0.2 */
 /* A fixed tab bar at the bottom, the music as one bubble floating over the page. */

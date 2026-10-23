@@ -1,12 +1,13 @@
 // What surrounds every screen: the tab bar, the mini player (its play button
 // rings with the song's progress), the full player with lyrics and casting,
 // the queue, sheets, toasts.
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ShieldCheck, Sparkles, Search, Library, ListMusic, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Heart, ChevronDown, Loader2, Download, Settings, X, Mic, Cast, Smartphone, Tv, Speaker, ArrowUpCircle, Check, MoreVertical } from 'lucide-react'
 import { useApp } from '../store'
 import { api } from '../api'
 import { usePlayer, toggle, next, previous, seek, toggleShuffle, cycleRepeat, toggleLike, openFull, coverOf, keyOf, jumpTo, removeFromQueue, codecLabel, castScan, castTo, stopCasting, stopPlayer, restorePlayer } from '../player'
 import { onEngine } from '../engine'
+import { spring, rubber, project, tracker, reducedMotion } from '../motion'
 import { Cover, StateMark, goToArtist, selectionMenu, selKey } from './Track'
 import { t } from '../i18n'
 
@@ -51,13 +52,86 @@ export function RingPlay({ big = false }) {
   )
 }
 
-/** A panel from the bottom (menu, queue, devices, a question): swipe it down to close it, like the player. */
+/**
+ * A panel from the bottom (menu, queue, devices, a question) over a dimmed
+ * screen. It follows the finger: thrown down it leaves at the finger's speed,
+ * caught mid-way it stays under the finger, pulled up it resists. The dimming
+ * follows how far it is. Tapping outside sends it away the same way.
+ */
 function SwipeSheet({ onClose, as: Tag = 'div', className = 'sheet', children, ...props }) {
-  const swipe = useSwipeDown(onClose, { limit: 90, ignore: 'input, textarea, select, [role=slider], .dlg-track' })
+  const sheetRef = useRef(null)
+  const dimRef = useRef(null)
+  const st = useRef(null)
+  if (!st.current) st.current = { y: 0, h: 400, anim: null, drag: null, closing: false, track: tracker() }
+  const ignore = 'input, textarea, select, [role=slider], .dlg-track'
+  const place = y => {
+    const s = st.current
+    s.y = y
+    if (sheetRef.current) sheetRef.current.style.transform = y ? `translate3d(0, ${y.toFixed(1)}px, 0)` : ''
+    if (dimRef.current) dimRef.current.style.opacity = String(Math.max(0, Math.min(1, 1 - y / Math.max(1, s.h))))
+  }
+  const animate = (to, { velocity = 0, response = 0.35, damping = 1, done } = {}) => {
+    const s = st.current
+    s.anim?.stop()
+    s.anim = spring({ from: s.y, to, velocity, response, damping, onFrame: place, onDone: () => { s.anim = null; done?.() } })
+  }
+  const measure = () => { const s = st.current; s.h = sheetRef.current?.offsetHeight || s.h; return s.h }
+  // Away at the finger's speed, without bouncing on the way out.
+  const dismiss = (velocity = 0) => {
+    const s = st.current
+    if (s.closing) return
+    s.closing = true
+    animate(measure() + 40, { velocity: Math.max(0, velocity), response: 0.3, done: onClose })
+  }
+  useLayoutEffect(() => {
+    place(measure() + 40)
+    animate(0, { response: 0.35 })
+    return () => st.current.anim?.stop()
+  }, [])
+  const onTouchStart = e => {
+    const s = st.current
+    if (e.touches.length !== 1 || e.target.closest(ignore)) { s.drag = null; return }
+    // Inside something scrolled down (a long menu): the finger scrolls it back up first.
+    for (let el = e.target; el && el !== sheetRef.current?.parentElement; el = el.parentElement) if (el.scrollTop > 0) { s.drag = null; return }
+    // Caught while moving: it stays exactly where it is.
+    if (s.anim) { s.anim.stop(); s.anim = null; s.closing = false }
+    const el = sheetRef.current
+    s.drag = { y0: e.touches[0].clientY, x0: e.touches[0].clientX, base: s.y, on: false, scrolls: !!el && el.scrollHeight > el.clientHeight + 1 }
+    measure()
+    s.track.reset(s.y)
+  }
+  const onTouchMove = e => {
+    const s = st.current, d = s.drag
+    if (!d) return
+    const dy = e.touches[0].clientY - d.y0, dx = e.touches[0].clientX - d.x0
+    if (!d.on) {
+      if (Math.abs(dy) < 10) return
+      // Sideways, or up in a list that scrolls: that's not for the panel.
+      if (Math.abs(dx) > Math.abs(dy) || (dy < 0 && d.scrolls)) { s.drag = null; if (s.y) animate(0); return }
+      d.on = true
+    }
+    let y = d.base + dy
+    if (y < 0) y = -rubber(-y, s.h)
+    place(y)
+    s.track.add(y)
+  }
+  const onTouchEnd = () => {
+    const s = st.current, d = s.drag
+    s.drag = null
+    if (!d) return
+    if (!d.on) { if (s.y && !s.closing) animate(0); return }
+    // Where the throw is going decides, not where the finger let go.
+    const v = s.track.velocity()
+    if (s.y + project(v) > s.h * 0.5) dismiss(v)
+    else animate(0, { velocity: v, response: 0.3, damping: v < -300 ? 0.8 : 1 })
+  }
   return (
-    <Tag ref={swipe.ref} className={className} onClick={e => e.stopPropagation()} onTouchStart={swipe.onTouchStart} onTouchMove={swipe.onTouchMove} onTouchEnd={swipe.onTouchEnd} {...props}>
-      {children}
-    </Tag>
+    <div className="scrim" onClick={() => dismiss(0)}>
+      <i className="scrim-dim" ref={dimRef} aria-hidden="true" />
+      <Tag ref={sheetRef} className={className} onClick={e => e.stopPropagation()} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={onTouchEnd} {...props}>
+        {children}
+      </Tag>
+    </div>
   )
 }
 
@@ -139,6 +213,108 @@ function CodecBadge({ song }) {
   )
 }
 
+/**
+ * The player grows out of the bubble at the bottom and goes back into it:
+ * the panel opens from the bubble's place and shape, the cover travels from
+ * the bubble's cover to its big place, the rest fades in once it's nearly
+ * there. Dragged down it follows the finger, thrown it goes back to the
+ * bubble at that speed, caught mid-way it stays under the finger.
+ */
+function usePlayerMorph(open, { busy }) {
+  const ref = useRef(null)
+  const [shown, setShown] = useState(open)
+  const m = useRef(null)
+  if (!m.current) m.current = { p: 0, anim: null, drag: null, geo: null, track: tracker() }
+  const mix = (a, b, t) => a + (b - a) * t
+  const mini = () => document.querySelector('.mini')
+  // Where the bubble and the big cover are (measured once per move).
+  const measure = () => {
+    const el = ref.current
+    if (!el) return null
+    const W = window.innerWidth, H = window.innerHeight
+    const bub = mini(), b = bub?.getBoundingClientRect()
+    const bubble = b && b.width ? { l: b.left, t: b.top, r: W - b.right, b: H - b.bottom, rad: parseFloat(getComputedStyle(bub).borderTopLeftRadius) || 18 } : { l: 8, t: H - 84, r: 8, b: 20, rad: 18 }
+    const small = bub?.querySelector('.cover')?.getBoundingClientRect()
+    const coverEl = el.querySelector('.cover-big')
+    let big = null
+    if (coverEl) { const keep = coverEl.style.transform; coverEl.style.transform = ''; big = coverEl.getBoundingClientRect(); coverEl.style.transform = keep }
+    m.current.geo = { W, H, bubble, small: small && small.width ? small : null, big: big && big.width ? big : null, coverEl, rest: [...el.children].filter(c => !c.classList.contains('cover-wrap')) }
+    return m.current.geo
+  }
+  const apply = p => {
+    const s = m.current, el = ref.current, g = s.geo || measure()
+    s.p = p
+    if (!el || !g) return
+    const q = Math.max(0, Math.min(1, p))
+    const settled = q === 1 && !s.drag
+    const { bubble: B } = g
+    el.style.clipPath = settled ? '' : `inset(${mix(B.t, 0, q).toFixed(1)}px ${mix(B.r, 0, q).toFixed(1)}px ${mix(B.b, 0, q).toFixed(1)}px ${mix(B.l, 0, q).toFixed(1)}px round ${mix(B.rad, 0, q).toFixed(1)}px)`
+    // Pulled up past open: it gives a little, then resists.
+    el.style.transform = p > 1 ? `translate3d(0, ${(-(p - 1) * g.H).toFixed(1)}px, 0)` : ''
+    if (g.coverEl && g.small && g.big) {
+      const sc = mix(g.small.width / g.big.width, 1, q)
+      const dx = mix(g.small.left + g.small.width / 2 - (g.big.left + g.big.width / 2), 0, q)
+      const dy = mix(g.small.top + g.small.height / 2 - (g.big.top + g.big.height / 2), 0, q)
+      g.coverEl.style.transform = settled ? '' : `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0) scale(${sc.toFixed(4)})`
+    }
+    const fade = Math.max(0, Math.min(1, (q - 0.5) / 0.5))
+    for (const c of g.rest) { c.style.opacity = settled ? '' : fade.toFixed(3); c.style.transform = settled ? '' : `translate3d(0, ${((1 - fade) * 24).toFixed(1)}px, 0)` }
+    const bub = mini()
+    if (bub) bub.style.visibility = q > 0.001 ? 'hidden' : ''
+  }
+  const go = (to, { velocity = 0, response = 0.4, damping = 1, done } = {}) => {
+    const s = m.current
+    s.anim?.stop()
+    s.anim = spring({ from: s.p, to, velocity, response, damping, onFrame: apply, onDone: () => { s.anim = null; apply(to); done?.() } })
+  }
+  useEffect(() => { if (open) setShown(true) }, [open])
+  useLayoutEffect(() => {
+    if (!shown) return
+    const s = m.current
+    if (open) { if (s.p < 1 && !s.drag) { measure(); apply(s.p); go(1) } return }
+    // Closed (the arrow, the back button, a link): back into the bubble.
+    measure()
+    go(0, { response: 0.35, done: () => { const b = mini(); if (b) b.style.visibility = ''; setShown(false) } })
+  }, [open, shown])
+  useEffect(() => () => { m.current.anim?.stop(); const b = mini(); if (b) b.style.visibility = '' }, [])
+  return {
+    ref, shown,
+    onTouchStart: e => {
+      const s = m.current
+      if (busy() || e.touches.length !== 1 || e.target.closest('input, .k-lines, [role=slider]')) { s.drag = null; return }
+      for (let el = e.target; el && el !== ref.current; el = el.parentElement) if (el.scrollTop > 0) { s.drag = null; return }
+      if (s.anim) { s.anim.stop(); s.anim = null }
+      measure()
+      s.drag = { y0: e.touches[0].clientY, x0: e.touches[0].clientX, base: s.p, on: false }
+      s.track.reset(s.p)
+    },
+    onTouchMove: e => {
+      const s = m.current, d = s.drag
+      if (!d) return
+      const dy = e.touches[0].clientY - d.y0, dx = e.touches[0].clientX - d.x0
+      if (!d.on) {
+        if (Math.abs(dy) < 10) return
+        if (Math.abs(dx) > Math.abs(dy)) { s.drag = null; if (s.p !== 1) go(1); return }
+        d.on = true
+      }
+      const H = s.geo?.H || window.innerHeight
+      let p = d.base - dy / (H * 0.75)
+      if (p > 1) p = 1 + rubber((p - 1) * H, H) / H
+      apply(p)
+      s.track.add(p)
+    },
+    onTouchEnd: () => {
+      const s = m.current, d = s.drag
+      s.drag = null
+      if (!d) return
+      if (!d.on) { if (s.p !== 1 && open) go(1); return }
+      const v = s.track.velocity()
+      if (s.p + project(v) < 0.6) go(0, { velocity: v, response: 0.35, done: () => openFull(false) })
+      else go(1, { velocity: v, response: 0.35, damping: v > 0.3 ? 0.8 : 1 })
+    },
+  }
+}
+
 export function FullPlayer() {
   const open = usePlayer(s => s.fullOpen)
   const song = usePlayer(s => s.queue[s.index])
@@ -150,15 +326,15 @@ export function FullPlayer() {
   const [lyricsOpen, setLyricsOpen] = useState(false)
   const [castOpen, setCastOpen] = useState(false)
   const job = useApp(s => (song && !song.local_id && song.deezer_id ? s.downloads.find(d => d.deezer_id === String(song.deezer_id)) : null))
-  const swipe = useSwipeDown(() => openFull(false))
-  if (!open || !song) return null
+  const morph = usePlayerMorph(open, { busy: () => queueOpen || lyricsOpen || castOpen })
+  if (!morph.shown || !song) return null
   const cover = coverOf(song)
   const RepeatIcon = repeat === 'one' ? Repeat1 : Repeat
   const device = cast.casting && cast.device ? cast.device : null
   const DeviceIcon = device ? (device.kind === 'speaker' ? Speaker : Tv) : Smartphone
   return (
-    <div className="full" role="dialog" aria-modal="true" aria-label={t('Lecture')} ref={swipe.ref}
-      onTouchStart={e => { if (!queueOpen && !lyricsOpen && !castOpen) swipe.onTouchStart(e) }} onTouchMove={swipe.onTouchMove} onTouchEnd={swipe.onTouchEnd}>
+    <div className="full" role="dialog" aria-modal="true" aria-label={t('Lecture')} ref={morph.ref}
+      onTouchStart={morph.onTouchStart} onTouchMove={morph.onTouchMove} onTouchEnd={morph.onTouchEnd} onTouchCancel={morph.onTouchEnd}>
       {cover && <div className="glow" style={{ backgroundImage: `url("${cover}")` }} />}
       <div className="bar">
         <button type="button" className="icon-btn" style={{ color: 'var(--text)' }} onClick={() => openFull(false)} aria-label={t('Fermer')}><ChevronDown size={28} /></button>
@@ -293,8 +469,7 @@ function CastSheet({ onClose }) {
   }, [])
   const onPhone = !cast.casting
   return (
-    <div className="scrim" onClick={onClose}>
-      <SwipeSheet onClose={onClose} role="dialog" aria-label={t('Écouter sur')}>
+    <SwipeSheet onClose={onClose} role="dialog" aria-label={t('Écouter sur')}>
         <div className="grab" />
         <h3>{t('Écouter sur')}</h3>
         <div className="sheet-sub">{t('Appareils sur le même Wi-Fi que ton téléphone')}</div>
@@ -316,8 +491,7 @@ function CastSheet({ onClose }) {
           )
         })}
         {devices && !devices.length && <p className="note" style={{ marginTop: 10 }}>{t('Aucune TV ni enceinte trouvée. Vérifie qu’elle est allumée et sur le même Wi-Fi.')}</p>}
-      </SwipeSheet>
-    </div>
+    </SwipeSheet>
   )
 }
 
@@ -326,8 +500,7 @@ function QueueSheet({ onClose }) {
   const index = usePlayer(s => s.index)
   const upNext = queue.map((song, i) => ({ song, i })).filter(x => x.i > index).slice(0, 200)
   return (
-    <div className="scrim" onClick={onClose}>
-      <SwipeSheet onClose={onClose} role="dialog" aria-label={t('File d’attente')}>
+    <SwipeSheet onClose={onClose} role="dialog" aria-label={t('File d’attente')}>
         <div className="grab" />
         <h3>{t('À suivre')}</h3>
         {!upNext.length && <p className="note">{t('Rien après ce titre.')}</p>}
@@ -343,8 +516,7 @@ function QueueSheet({ onClose }) {
             </div>
           ))}
         </div>
-      </SwipeSheet>
-    </div>
+    </SwipeSheet>
   )
 }
 
@@ -353,8 +525,7 @@ export function ActionSheet() {
   const close = useApp(s => s.closeSheet)
   if (!sheet) return null
   return (
-    <div className="scrim" onClick={close}>
-      <SwipeSheet onClose={close} role="dialog" aria-label={sheet.title}>
+    <SwipeSheet onClose={close} role="dialog" aria-label={sheet.title}>
         <div className="grab" />
         {sheet.stack ? (
           <div className="sheet-stack-head">
@@ -373,8 +544,7 @@ export function ActionSheet() {
           </button>
         ))}
         {sheet.footer}
-      </SwipeSheet>
-    </div>
+    </SwipeSheet>
   )
 }
 
@@ -428,8 +598,7 @@ export function Dialog() {
   const hex = hslToHex(hsl)
   const ok = () => close(dialog.kind === 'text' ? (text.trim() || dialog.value || '') : dialog.kind === 'color' ? hex : true)
   return (
-    <div className="scrim" onClick={() => close(null)}>
-      <SwipeSheet as="form" className="sheet dlg" onClose={() => close(null)} role="dialog" aria-modal="true" aria-label={dialog.title} onSubmit={e => { e.preventDefault(); ok() }}>
+    <SwipeSheet as="form" className="sheet dlg" onClose={() => close(null)} role="dialog" aria-modal="true" aria-label={dialog.title} onSubmit={e => { e.preventDefault(); ok() }}>
         <div className="grab" />
         {dialog.kind === 'color' ? (
           <div className="dlg-color-head">
@@ -462,8 +631,7 @@ export function Dialog() {
           <button type="button" className="btn quiet" onClick={() => close(null)}>{t('Annuler')}</button>
           <button type="submit" className={`btn ${dialog.danger ? 'danger' : ''}`} style={dialog.kind === 'color' ? { background: hex, color: hsl.l > 0.55 ? '#141414' : '#fff' } : undefined}>{dialog.confirm || t('OK')}</button>
         </div>
-      </SwipeSheet>
-    </div>
+    </SwipeSheet>
   )
 }
 
