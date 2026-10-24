@@ -279,8 +279,22 @@ public class PlaybackService extends MediaLibraryService {
         }
 
         private void goPrevious() {
-            if (getWrappedPlayer().getCurrentPosition() > 4000) getWrappedPlayer().seekTo(0);
-            else emit("remote", json("action", "previous"));
+            if (getWrappedPlayer().getCurrentPosition() > 4000) { getWrappedPlayer().seekTo(0); return; }
+            // The songs already played are kept here: going back works even
+            // when the app is asleep (phone locked, in the car, steering-wheel
+            // buttons). The app follows with "jump".
+            Item back = history.isEmpty() ? null : history.remove(history.size() - 1);
+            if (back == null) { emit("remote", json("action", "previous")); return; }
+            boolean cast = active == castPlayer && castPlayer != null;
+            MediaItem m = back.toMediaItem(cast);
+            if (m == null) { history.add(back); emit("remote", json("action", "previous")); return; }
+            try {
+                getWrappedPlayer().addMediaItem(0, m);
+                items.add(0, back);
+                getWrappedPlayer().seekTo(0, 0);
+                getWrappedPlayer().play();
+                emit("remote", jump(back.id));
+            } catch (RuntimeException e) { Log.w(TAG, "previous: " + e.getMessage()); emit("remote", json("action", "previous")); }
         }
     }
 
@@ -308,7 +322,7 @@ public class PlaybackService extends MediaLibraryService {
             main.post(() -> {
                 if (active == null) return;
                 while (active.getCurrentMediaItemIndex() > 0) active.removeMediaItem(0);
-                while (items.size() > 1 && !id.equals(items.get(0).id)) items.remove(0);
+                while (items.size() > 1 && !id.equals(items.get(0).id)) remember(items.remove(0));
                 // The queue here is running low: the app adds more when it can.
             });
             emit("advanced", json("id", id));
@@ -334,7 +348,25 @@ public class PlaybackService extends MediaLibraryService {
         return list;
     }
 
+    // ------------------------------------------------------------ history
+    /** The songs played before this one, most recent last (for "previous" without the app). */
+    private final List<Item> history = new ArrayList<>();
+    private void remember(@Nullable Item played) {
+        if (played == null || played.id == null) return;
+        if (!history.isEmpty() && played.id.equals(history.get(history.size() - 1).id)) return;
+        history.add(played);
+        while (history.size() > 100) history.remove(0);
+    }
+
     void load(Item current, @Nullable Item next, long positionMs, boolean play) {
+        // A new song from the app: the one playing goes into the history,
+        // unless the app is going back to the one before (then it leaves it).
+        Item playing = items.isEmpty() ? null : items.get(0);
+        if (playing != null && current.id != null && !current.id.equals(playing.id)) {
+            Item last = history.isEmpty() ? null : history.get(history.size() - 1);
+            if (last != null && current.id.equals(last.id)) history.remove(history.size() - 1);
+            else remember(playing);
+        }
         items.clear();
         items.add(current);
         if (next != null) items.add(next);

@@ -1,7 +1,7 @@
 {
   "name": "echo",
   "private": true,
-  "version": "0.3.8",
+  "version": "0.3.8.1",
   "description": "Écho: your music offline, songs downloaded in one tap, daily mixes from what you listen to. Android.",
   "license": "MIT",
   "scripts": {
