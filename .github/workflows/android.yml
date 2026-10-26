@@ -46,16 +46,27 @@ jobs:
       - name: Test the server under the phone's limits (Node 18, no ICU)
         timeout-minutes: 20
         run: |
+          set -o pipefail
+          # Where it is slow or stuck shows as notices (job logs aren't always readable).
+          step() { echo "::notice::$(date -u +%H:%M:%S) $1"; }
           # ffmpeg for the test songs. A slow package mirror must not hold the
           # build for an hour: short timeouts and retries.
           if ! command -v ffmpeg > /dev/null; then
+            step "installing ffmpeg"
             apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
             timeout 300 sudo apt-get $apt_opts update -qq || echo "::warning::apt-get update was slow or failed"
-            timeout 600 sudo apt-get $apt_opts install -y -qq --no-install-recommends ffmpeg > /dev/null
+            timeout 600 sudo apt-get $apt_opts install -y -qq --no-install-recommends ffmpeg > /dev/null || { echo "::error::ffmpeg could not be installed"; exit 1; }
           fi
+          step "ffmpeg ready, getting Node 18"
           npm pack node-linux-x64@18.20.4 --silent --pack-destination "$RUNNER_TEMP" > /dev/null
           tar xzf "$RUNNER_TEMP/node-linux-x64-18.20.4.tgz" -C "$RUNNER_TEMP"
-          timeout 600 node scripts/smoke-test.mjs "$RUNNER_TEMP/package/bin/node"
+          step "smoke test"
+          if ! timeout 600 node scripts/smoke-test.mjs "$RUNNER_TEMP/package/bin/node" 2>&1 | tee smoke.log; then
+            echo "::error::smoke test failed or stuck; last lines below"
+            tail -25 smoke.log | sed 's/^/::error::/' | cut -c1-400
+            exit 1
+          fi
+          step "smoke test done"
 
       - name: Real network check (report)
         continue-on-error: true
