@@ -49,13 +49,16 @@ jobs:
           set -o pipefail
           # Where it is slow or stuck shows as notices (job logs aren't always readable).
           step() { echo "::notice::$(date -u +%H:%M:%S) $1"; }
-          # ffmpeg for the test songs. A slow package mirror must not hold the
-          # build for an hour: short timeouts and retries.
+          # ffmpeg for the test songs: a static build from npm (the Ubuntu
+          # package mirror was down and held the build for an hour).
           if ! command -v ffmpeg > /dev/null; then
-            step "installing ffmpeg"
-            apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
-            timeout 300 sudo apt-get $apt_opts update -qq || echo "::warning::apt-get update was slow or failed"
-            timeout 600 sudo apt-get $apt_opts install -y -qq --no-install-recommends ffmpeg > /dev/null || { echo "::error::ffmpeg could not be installed"; exit 1; }
+            step "getting ffmpeg"
+            mkdir -p "$RUNNER_TEMP/ffmpeg/bin"
+            timeout 300 npm pack @ffmpeg-installer/linux-x64@4.1.0 --silent --pack-destination "$RUNNER_TEMP/ffmpeg" > /dev/null || { echo "::error::ffmpeg could not be downloaded"; exit 1; }
+            tar xzf "$RUNNER_TEMP"/ffmpeg/*.tgz -C "$RUNNER_TEMP/ffmpeg"
+            ln -sf "$RUNNER_TEMP/ffmpeg/package/ffmpeg" "$RUNNER_TEMP/ffmpeg/bin/ffmpeg"
+            export PATH="$RUNNER_TEMP/ffmpeg/bin:$PATH"
+            echo "$RUNNER_TEMP/ffmpeg/bin" >> "$GITHUB_PATH"
           fi
           step "ffmpeg ready, getting Node 18"
           npm pack node-linux-x64@18.20.4 --silent --pack-destination "$RUNNER_TEMP" > /dev/null
