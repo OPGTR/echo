@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Écho in the car (ArtProvider). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFF2A65A" android:pathData="M12,20C12,20 5,15.6 5,10A4,4 0,0 1,12 7.4A4,4 0,0 1,19 10C19,15.6 12,20 12,20Z" />
+</vector>

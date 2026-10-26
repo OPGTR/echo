@@ -8,6 +8,7 @@ import android.media.audiofx.DynamicsProcessing;
 import android.media.audiofx.Equalizer;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -30,23 +31,36 @@ import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.extractor.DefaultExtractorsFactory;
+import androidx.media3.session.CommandButton;
 import androidx.media3.session.LibraryResult;
+import androidx.media3.session.MediaConstants;
 import androidx.media3.session.MediaLibraryService;
 import androidx.media3.session.MediaSession;
+import androidx.media3.session.SessionCommand;
+import androidx.media3.session.SessionCommands;
+import androidx.media3.session.SessionResult;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.SettableFuture;
 
 import com.google.android.gms.cast.Cast;
 import com.google.android.gms.cast.framework.CastContext;
 import com.google.android.gms.cast.framework.CastSession;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Écho's player: ExoPlayer in a media session service. It plays in the
@@ -59,9 +73,11 @@ import java.util.List;
  * "Previous"/"next" from the notification go to the app, which knows the queue.
  *
  * It is also a media library (Android Auto, car screens, Bluetooth browsing):
- * the songs coming next, as the app last described them, can be browsed and
- * picked from the car; the car's buttons and steering-wheel controls drive the
- * same session.
+ * the car lists Pour toi, Playlists and Bibliothèque (asked from Écho's
+ * server, see server/auto.js and AutoLink), and what is picked there plays
+ * here even when the app isn't open; the app follows when it is. The car's
+ * buttons (♥, aléatoire, répéter, égaliseur) and steering-wheel controls drive
+ * the same session.
  */
 @UnstableApi
 public class PlaybackService extends MediaLibraryService {
@@ -80,7 +96,21 @@ public class PlaybackService extends MediaLibraryService {
     private MediaLibrarySession session;
     // The queue as the app last described it, for car screens.
     private final List<Item> library = new ArrayList<>();
-    static final String ROOT = "echo-root", QUEUE = "echo-queue";
+    static final String ROOT = "echo-root";
+    // The car's buttons next to play/pause.
+    static final String CMD_LIKE = "echo.like", CMD_SHUFFLE = "echo.shuffle", CMD_REPEAT = "echo.repeat", CMD_EQ = "echo.eq";
+    private boolean likedNow = false;
+    @Nullable private String likedId = null;
+    private boolean shuffleOn = false;
+    private int repeatMode = 0; // 0 off, 1 all, 2 this song
+    private String eqName = "Désactivé";
+    // What the car listed (for onGetItem) and its searches.
+    private final Map<String, JSONObject> nodes = new ConcurrentHashMap<>();
+    private final Map<String, List<MediaItem>> searches = new ConcurrentHashMap<>();
+    // A queue started from the car while the app sleeps: all of it (repeat
+    // all) and, while shuffled, its order before (shuffle off again).
+    @Nullable private List<Item> carAll = null;
+    @Nullable private List<Item> carOrder = null;
     private int audioSession = 0;
     private DynamicsProcessing dynamics;
     private Equalizer equalizer;
@@ -94,6 +124,7 @@ public class PlaybackService extends MediaLibraryService {
 
     static class Item {
         String id, url, castUrl, mime, title, artist, album, artwork, castArtwork;
+        @Nullable String quality; // "FLAC 24 bits · Basses+", shown in the car under the artist
         long durationMs;
 
         /** True when a TV / Google Nest can fetch it (Écho's Wi-Fi address, not 127.0.0.1). */
@@ -110,6 +141,10 @@ public class PlaybackService extends MediaLibraryService {
                 .setIsPlayable(true);
             String art = forCast ? castArtwork : artwork;
             if (art != null && !art.isEmpty()) meta.setArtworkUri(Uri.parse(art));
+            if (quality != null && !quality.isEmpty()) {
+                meta.setSubtitle(artist == null || artist.isEmpty() ? quality : artist + " · " + quality);
+                meta.setDescription(quality);
+            }
             MediaItem.Builder b = new MediaItem.Builder()
                 .setMediaId(id == null ? "" : id)
                 .setUri(forCast && castUrl != null ? castUrl : url)
@@ -154,6 +189,11 @@ public class PlaybackService extends MediaLibraryService {
         PendingIntent activity = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         session = new MediaLibrarySession.Builder(this, new AppControlledPlayer(exo), libraryCallback).setSessionActivity(activity).build();
         applyEqualizer();
+        session.setCustomLayout(buttons());
+        // The car may start the player without the app: Écho's server too, then
+        // the equalizer you chose (the app sets it itself when it's open).
+        AutoLink.init(this);
+        AutoLink.io.execute(this::loadEqualizer);
 
         try {
             CastContext cast = CastContext.getSharedInstance(this);
@@ -309,12 +349,18 @@ public class PlaybackService extends MediaLibraryService {
 
         @Override
         public void onPlaybackStateChanged(int state) {
-            if (state == Player.STATE_ENDED && active != null && active.getMediaItemCount() > 0) emit("ended", status());
+            if (state == Player.STATE_ENDED && active != null && active.getMediaItemCount() > 0) {
+                emit("ended", status());
+                // Started from the car, the app asleep: "Répéter : tout" starts again.
+                if (!appAlive() && repeatMode == 1 && carAll != null && !carAll.isEmpty()) main.post(() -> playCarQueue(new ArrayList<>(carAll), 0));
+            }
         }
 
         @Override
         public void onMediaItemTransition(@Nullable MediaItem mediaItem, int reason) {
             if (mediaItem == null || active == null) return;
+            refreshLiked(mediaItem.mediaId);
+            main.post(PlaybackService.this::saveResume);
             if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && reason != Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) return;
             if (active.getCurrentMediaItemIndex() <= 0) return;
             // Moved on to the song that was waiting: drop the finished one.
@@ -378,6 +424,11 @@ public class PlaybackService extends MediaLibraryService {
             active.prepare();
             active.setPlayWhenReady(play);
         } catch (RuntimeException e) { Log.w(TAG, "load: " + e.getMessage()); }
+        // The app chose: its queue now, not one started in the car.
+        carAll = null;
+        carOrder = null;
+        refreshLiked(current.id);
+        saveResume();
     }
 
     /**
@@ -395,6 +446,7 @@ public class PlaybackService extends MediaLibraryService {
         items.addAll(next);
         List<MediaItem> list = mediaItems(next, cast);
         try { if (!list.isEmpty()) active.addMediaItems(list); } catch (RuntimeException e) { Log.w(TAG, "upcoming: " + e.getMessage()); }
+        saveResume();
     }
 
     /** The song after the current one changed (or is now on the phone). */
@@ -582,12 +634,14 @@ public class PlaybackService extends MediaLibraryService {
 
 
     // ------------------------------------------------------------ library
-    /** The songs coming next (from the app): what a car screen can browse. */
+    /** The songs coming next (from the app): found again when the car asks for one of them. */
     void setLibrary(List<Item> list) {
         library.clear();
         library.addAll(list);
-        if (session != null) session.notifyChildrenChanged(QUEUE, library.size(), null);
     }
+
+    /** Is Écho's window there to follow (and to decide the queue)? */
+    private static boolean appAlive() { return listener != null; }
 
     private MediaItem browsable(String id, String title) {
         return new MediaItem.Builder().setMediaId(id).setMediaMetadata(new MediaMetadata.Builder()
@@ -601,33 +655,241 @@ public class PlaybackService extends MediaLibraryService {
         return null;
     }
 
+    /** A row of the car screen, from server/auto.js. */
+    private MediaItem toItem(JSONObject n) {
+        String id = n.optString("id", "");
+        boolean folder = n.optBoolean("browsable", false);
+        MediaMetadata.Builder m = new MediaMetadata.Builder()
+            .setTitle(n.optString("title", ""))
+            .setIsBrowsable(folder)
+            .setIsPlayable(n.optBoolean("playable", false))
+            .setMediaType(folder ? MediaMetadata.MEDIA_TYPE_FOLDER_MIXED : MediaMetadata.MEDIA_TYPE_MUSIC);
+        String sub = n.optString("subtitle", "");
+        if (!sub.isEmpty()) m.setSubtitle(sub);
+        if (!folder && !n.optBoolean("action", false) && !sub.isEmpty()) m.setArtist(sub);
+        String album = n.optString("album", "");
+        if (!album.isEmpty()) m.setAlbumTitle(album);
+        String art = n.isNull("art") ? "" : n.optString("art", "");
+        if (!art.isEmpty()) m.setArtworkUri(Uri.parse(art));
+        Bundle extras = new Bundle();
+        String group = n.optString("group", "");
+        if (!group.isEmpty()) extras.putString(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_GROUP_TITLE, group);
+        // ↓ next to the songs already on the phone.
+        if (n.optBoolean("downloaded", false)) extras.putLong(MediaConstants.EXTRAS_KEY_DOWNLOAD_STATUS, 2 /* downloaded */);
+        if (folder) {
+            String style = n.optString("style", "list");
+            extras.putInt(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_BROWSABLE, "grid".equals(style) ? MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_GRID_ITEM : MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM);
+            extras.putInt(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_PLAYABLE, MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM);
+        }
+        m.setExtras(extras);
+        nodes.put(id, n);
+        return new MediaItem.Builder().setMediaId(id).setMediaMetadata(m.build()).build();
+    }
+
+    private List<MediaItem> toItems(@Nullable Object value) {
+        List<MediaItem> out = new ArrayList<>();
+        if (!(value instanceof JSONArray)) return out;
+        JSONArray a = (JSONArray) value;
+        for (int i = 0; i < a.length(); i++) {
+            JSONObject n = a.optJSONObject(i);
+            if (n != null && !n.optString("id", "").isEmpty()) out.add(toItem(n));
+        }
+        return out;
+    }
+
+    /** A row that only says something (Écho not answering…). */
+    private static MediaItem note(String title, String subtitle) {
+        return new MediaItem.Builder().setMediaId("note|" + title).setMediaMetadata(new MediaMetadata.Builder()
+            .setTitle(title).setSubtitle(subtitle).setIsBrowsable(false).setIsPlayable(false)
+            .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC).build()).build();
+    }
+
+    private static ImmutableList<MediaItem> slice(List<MediaItem> all, int page, int pageSize) {
+        int size = Math.max(1, pageSize);
+        int from = Math.max(0, page * size);
+        if (from >= all.size()) return ImmutableList.of();
+        return ImmutableList.copyOf(all.subList(from, Math.min(all.size(), from + size)));
+    }
+
+    /** One of Écho's songs, as the server describes it for the player. */
+    @Nullable
+    private static Item itemOf(@Nullable JSONObject o) {
+        if (o == null) return null;
+        Item i = new Item();
+        i.id = o.optString("id", "");
+        i.url = o.optString("url", "");
+        i.title = o.optString("title", "");
+        i.artist = o.optString("artist", "");
+        i.album = o.optString("album", "");
+        i.artwork = o.isNull("artwork") ? null : o.optString("artwork", null);
+        i.quality = o.optString("quality", "");
+        i.durationMs = (long) (o.optDouble("duration", 0) * 1000);
+        return i.url.isEmpty() ? null : i;
+    }
+
+    /**
+     * A queue from the car (or the voice): it plays here at once, the app
+     * follows when it's open ("car": its songs and where in them).
+     */
+    private MediaSession.MediaItemsWithStartPosition startCarQueue(JSONObject r, long positionMs) {
+        List<Item> list = new ArrayList<>();
+        JSONArray a = r.optJSONArray("items");
+        if (a != null) for (int k = 0; k < a.length(); k++) { Item i = itemOf(a.optJSONObject(k)); if (i != null) list.add(i); }
+        Item playing = items.isEmpty() ? null : items.get(0);
+        if (playing != null && (list.isEmpty() || !list.get(0).id.equals(playing.id))) remember(playing);
+        items.clear();
+        items.addAll(list);
+        carAll = new ArrayList<>(list);
+        carOrder = null;
+        shuffleOn = r.optBoolean("shuffle", false);
+        JSONObject e = new JSONObject();
+        try {
+            e.put("action", "car");
+            e.put("songs", r.optJSONArray("songs"));
+            e.put("index", r.optInt("index", 0));
+            e.put("context", r.optString("context", "list"));
+            e.put("shuffle", shuffleOn);
+        } catch (Exception ignored) {}
+        emit("remote", e);
+        if (!list.isEmpty()) refreshLiked(list.get(0).id);
+        updateButtons();
+        saveResume();
+        return new MediaSession.MediaItemsWithStartPosition(mediaItems(items, false), 0, Math.max(0, positionMs));
+    }
+
+    /** The same queue again from its start (repeat all without the app). */
+    private void playCarQueue(List<Item> list, long positionMs) {
+        if (active == null || list.isEmpty()) return;
+        items.clear();
+        items.addAll(list);
+        try {
+            active.setMediaItems(mediaItems(items, false), 0, positionMs);
+            active.prepare();
+            active.play();
+        } catch (RuntimeException e) { Log.w(TAG, "car queue: " + e.getMessage()); }
+    }
+
     private final MediaLibrarySession.Callback libraryCallback = new MediaLibrarySession.Callback() {
         @NonNull
         @Override
+        public MediaSession.ConnectionResult onConnect(@NonNull MediaSession s, @NonNull MediaSession.ControllerInfo controller) {
+            SessionCommands.Builder commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon();
+            for (String c : new String[] { CMD_LIKE, CMD_SHUFFLE, CMD_REPEAT, CMD_EQ }) commands.add(new SessionCommand(c, Bundle.EMPTY));
+            return new MediaSession.ConnectionResult.AcceptedResultBuilder(s)
+                .setAvailableSessionCommands(commands.build())
+                .setCustomLayout(buttons())
+                .build();
+        }
+
+        @NonNull
+        @Override
+        public ListenableFuture<SessionResult> onCustomCommand(@NonNull MediaSession s, @NonNull MediaSession.ControllerInfo controller, @NonNull SessionCommand command, @NonNull Bundle args) {
+            switch (command.customAction) {
+                case CMD_LIKE: toggleLike(); break;
+                case CMD_SHUFFLE: if (appAlive()) emit("remote", json("action", "shuffle")); else shuffleHere(); break;
+                case CMD_REPEAT: if (appAlive()) emit("remote", json("action", "repeat")); else repeatHere(); break;
+                case CMD_EQ: nextEqualizer(); break;
+                default: return Futures.immediateFuture(new SessionResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED));
+            }
+            return Futures.immediateFuture(new SessionResult(SessionResult.RESULT_SUCCESS));
+        }
+
+        @NonNull
+        @Override
         public ListenableFuture<LibraryResult<MediaItem>> onGetLibraryRoot(@NonNull MediaLibrarySession s, @NonNull MediaSession.ControllerInfo browser, @Nullable LibraryParams params) {
-            return Futures.immediateFuture(LibraryResult.ofItem(browsable(ROOT, "Écho"), params));
+            AutoLink.init(PlaybackService.this);
+            // Covers in a grid (mixes, playlists), songs in a list.
+            Bundle extras = new Bundle();
+            extras.putInt(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_BROWSABLE, MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_GRID_ITEM);
+            extras.putInt(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_PLAYABLE, MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM);
+            LibraryParams out = new LibraryParams.Builder().setExtras(extras).build();
+            return Futures.immediateFuture(LibraryResult.ofItem(browsable(ROOT, "Écho"), out));
         }
 
         @NonNull
         @Override
         public ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> onGetChildren(@NonNull MediaLibrarySession s, @NonNull MediaSession.ControllerInfo browser, @NonNull String parentId, int page, int pageSize, @Nullable LibraryParams params) {
-            List<MediaItem> out = new ArrayList<>();
-            if (ROOT.equals(parentId)) out.add(browsable(QUEUE, "À suivre"));
-            else if (QUEUE.equals(parentId)) for (Item i : library) out.add(i.toMediaItem(false));
-            int from = Math.max(0, page * Math.max(1, pageSize));
-            List<MediaItem> slice = from >= out.size() ? Collections.emptyList() : out.subList(from, Math.min(out.size(), from + Math.max(1, pageSize)));
-            return Futures.immediateFuture(LibraryResult.ofItemList(ImmutableList.copyOf(slice), params));
+            String id = ROOT.equals(parentId) ? "root" : parentId;
+            SettableFuture<LibraryResult<ImmutableList<MediaItem>>> out = SettableFuture.create();
+            AutoLink.io.execute(() -> {
+                List<MediaItem> list;
+                try {
+                    list = toItems(AutoLink.callNow("GET", "/api/auto/children?id=" + Uri.encode(id), null));
+                } catch (Exception e) {
+                    Log.w(TAG, "car list " + id + ": " + e.getMessage());
+                    list = new ArrayList<>();
+                    list.add(AutoLink.connected()
+                        ? note("Écho n’a pas pu afficher ceci", e.getMessage() == null ? "Réessaie dans un instant" : e.getMessage())
+                        : note("Écho démarre…", "Réessaie dans un instant"));
+                }
+                out.set(LibraryResult.ofItemList(slice(list, page, pageSize), params));
+            });
+            return out;
         }
 
         @NonNull
         @Override
         public ListenableFuture<LibraryResult<MediaItem>> onGetItem(@NonNull MediaLibrarySession s, @NonNull MediaSession.ControllerInfo browser, @NonNull String mediaId) {
+            JSONObject n = nodes.get(mediaId);
+            if (n != null) return Futures.immediateFuture(LibraryResult.ofItem(toItem(n), null));
             Item i = find(mediaId);
             if (i == null) return Futures.immediateFuture(LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE));
             return Futures.immediateFuture(LibraryResult.ofItem(i.toMediaItem(false), null));
         }
 
-        /** A song picked on the car screen: it plays here, and the app follows. */
+        /** The car's search (the magnifier, or typed when parked). */
+        @NonNull
+        @Override
+        public ListenableFuture<LibraryResult<Void>> onSearch(@NonNull MediaLibrarySession s, @NonNull MediaSession.ControllerInfo browser, @NonNull String query, @Nullable LibraryParams params) {
+            AutoLink.io.execute(() -> {
+                List<MediaItem> list = searchNow(query);
+                main.post(() -> { if (session != null) session.notifySearchResultChanged(browser, query, list.size(), params); });
+            });
+            return Futures.immediateFuture(LibraryResult.ofVoid());
+        }
+
+        @NonNull
+        @Override
+        public ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> onGetSearchResult(@NonNull MediaLibrarySession s, @NonNull MediaSession.ControllerInfo browser, @NonNull String query, int page, int pageSize, @Nullable LibraryParams params) {
+            List<MediaItem> done = searches.get(query);
+            if (done != null) return Futures.immediateFuture(LibraryResult.ofItemList(slice(done, page, pageSize), params));
+            SettableFuture<LibraryResult<ImmutableList<MediaItem>>> out = SettableFuture.create();
+            AutoLink.io.execute(() -> out.set(LibraryResult.ofItemList(slice(searchNow(query), page, pageSize), params)));
+            return out;
+        }
+
+        /**
+         * Something picked in the car, or said ("Mets du Stromae"): the server
+         * gives the queue, it plays here, the app follows.
+         */
+        @NonNull
+        @Override
+        public ListenableFuture<MediaSession.MediaItemsWithStartPosition> onSetMediaItems(@NonNull MediaSession s, @NonNull MediaSession.ControllerInfo controller, @NonNull List<MediaItem> mediaItems, int startIndex, long startPositionMs) {
+            MediaItem first = mediaItems.isEmpty() ? null : mediaItems.get(0);
+            JSONObject body = new JSONObject();
+            try {
+                String id = first != null ? first.mediaId : "";
+                CharSequence said = first != null ? first.requestMetadata.searchQuery : null;
+                if (id != null && !id.isEmpty()) body.put("id", id);
+                else body.put("query", said == null ? "" : said.toString());
+            } catch (Exception ignored) {}
+            SettableFuture<MediaSession.MediaItemsWithStartPosition> out = SettableFuture.create();
+            AutoLink.io.execute(() -> {
+                try {
+                    Object r = AutoLink.callNow("POST", "/api/auto/play", body);
+                    if (!(r instanceof JSONObject)) throw new IllegalStateException("nothing to play");
+                    main.post(() -> {
+                        try { out.set(startCarQueue((JSONObject) r, 0)); } catch (Exception e) { out.setException(e); }
+                    });
+                } catch (Exception e) {
+                    Log.w(TAG, "car play: " + e.getMessage());
+                    out.setException(e);
+                }
+            });
+            return out;
+        }
+
+        /** A song from the list the app gave (old car screens, Bluetooth browsing). */
         @NonNull
         @Override
         public ListenableFuture<List<MediaItem>> onAddMediaItems(@NonNull MediaSession s, @NonNull MediaSession.ControllerInfo controller, @NonNull List<MediaItem> mediaItems) {
@@ -644,16 +906,232 @@ public class PlaybackService extends MediaLibraryService {
             return Futures.immediateFuture(out);
         }
 
-        /** Play pressed in the car with nothing loaded: the last song again. */
+        /**
+         * Play pressed in the car with nothing loaded (or the car starting the
+         * music by itself): what was playing, where it was.
+         */
         @NonNull
         @Override
         public ListenableFuture<MediaSession.MediaItemsWithStartPosition> onPlaybackResumption(@NonNull MediaSession s, @NonNull MediaSession.ControllerInfo controller) {
-            List<MediaItem> list = new ArrayList<>();
-            for (Item i : items) list.add(i.toMediaItem(false));
-            if (list.isEmpty() && !library.isEmpty()) list.add(library.get(0).toMediaItem(false));
-            return Futures.immediateFuture(new MediaSession.MediaItemsWithStartPosition(list, 0, C.TIME_UNSET));
+            if (!items.isEmpty()) {
+                List<MediaItem> list = new ArrayList<>();
+                for (Item i : items) list.add(i.toMediaItem(false));
+                return Futures.immediateFuture(new MediaSession.MediaItemsWithStartPosition(list, 0, C.TIME_UNSET));
+            }
+            SettableFuture<MediaSession.MediaItemsWithStartPosition> out = SettableFuture.create();
+            AutoLink.io.execute(() -> {
+                try {
+                    JSONObject saved = readResume();
+                    if (saved == null) throw new IllegalStateException("nothing played yet");
+                    long position = saved.optLong("position", 0);
+                    Object r = AutoLink.callNow("POST", "/api/auto/resume", saved);
+                    if (!(r instanceof JSONObject)) throw new IllegalStateException("nothing to resume");
+                    main.post(() -> {
+                        try { out.set(startCarQueue((JSONObject) r, position)); } catch (Exception e) { out.setException(e); }
+                    });
+                } catch (Exception e) {
+                    Log.w(TAG, "resume: " + e.getMessage());
+                    if (!library.isEmpty()) out.set(new MediaSession.MediaItemsWithStartPosition(Collections.singletonList(library.get(0).toMediaItem(false)), 0, C.TIME_UNSET));
+                    else out.setException(e);
+                }
+            });
+            return out;
         }
     };
+
+    private List<MediaItem> searchNow(String query) {
+        List<MediaItem> list;
+        try {
+            list = toItems(AutoLink.callNow("GET", "/api/auto/search?q=" + Uri.encode(query), null));
+        } catch (Exception e) {
+            Log.w(TAG, "car search: " + e.getMessage());
+            list = new ArrayList<>();
+        }
+        if (searches.size() > 20) searches.clear();
+        searches.put(query, list);
+        return list;
+    }
+
+    // ------------------------------------------------- the car's buttons
+    private List<CommandButton> buttons() {
+        List<CommandButton> b = new ArrayList<>();
+        b.add(new CommandButton.Builder(likedNow ? CommandButton.ICON_HEART_FILLED : CommandButton.ICON_HEART_UNFILLED)
+            .setDisplayName(likedNow ? "Retirer des titres aimés" : "J’aime")
+            .setSessionCommand(new SessionCommand(CMD_LIKE, Bundle.EMPTY)).build());
+        b.add(new CommandButton.Builder(shuffleOn ? CommandButton.ICON_SHUFFLE_ON : CommandButton.ICON_SHUFFLE_OFF)
+            .setDisplayName(shuffleOn ? "Aléatoire : oui" : "Aléatoire : non")
+            .setSessionCommand(new SessionCommand(CMD_SHUFFLE, Bundle.EMPTY)).build());
+        b.add(new CommandButton.Builder(repeatMode == 2 ? CommandButton.ICON_REPEAT_ONE : repeatMode == 1 ? CommandButton.ICON_REPEAT_ALL : CommandButton.ICON_REPEAT_OFF)
+            .setDisplayName(repeatMode == 2 ? "Répéter : ce titre" : repeatMode == 1 ? "Répéter : tout" : "Répéter : non")
+            .setSessionCommand(new SessionCommand(CMD_REPEAT, Bundle.EMPTY)).build());
+        b.add(new CommandButton.Builder(CommandButton.ICON_UNDEFINED)
+            .setCustomIconResId(R.drawable.ic_cmd_eq)
+            .setDisplayName("Égaliseur : " + eqName)
+            .setSessionCommand(new SessionCommand(CMD_EQ, Bundle.EMPTY)).build());
+        return b;
+    }
+
+    private void updateButtons() {
+        main.post(() -> { if (session != null) session.setCustomLayout(buttons()); });
+    }
+
+    /** The app's own shuffle, repeat and ♥ (changed on the phone, or after the car asked). */
+    void setModes(@Nullable Boolean shuffle, @Nullable String repeat, @Nullable String likeId, @Nullable Boolean liked) {
+        if (shuffle != null) shuffleOn = shuffle;
+        if (repeat != null) {
+            repeatMode = "one".equals(repeat) ? 2 : "all".equals(repeat) ? 1 : 0;
+            // The app repeats by itself.
+            if (exo != null) exo.setRepeatMode(Player.REPEAT_MODE_OFF);
+        }
+        if (likeId != null && liked != null) { likedId = likeId; likedNow = liked; }
+        updateButtons();
+    }
+
+    /** ♥ of the song playing (asked to the server when the song changes). */
+    private void refreshLiked(@Nullable String id) {
+        if (id == null || id.isEmpty() || id.startsWith("d:")) {
+            if (likedNow) { likedNow = false; likedId = id; updateButtons(); }
+            return;
+        }
+        AutoLink.io.execute(() -> {
+            try {
+                Object r = AutoLink.callNow("GET", "/api/tracks/" + Uri.encode(id), null);
+                boolean liked = r instanceof JSONObject && ((JSONObject) r).optInt("liked", 0) == 1;
+                main.post(() -> {
+                    MediaItem now = active != null ? active.getCurrentMediaItem() : null;
+                    if (now == null || !id.equals(now.mediaId)) return;
+                    likedId = id;
+                    if (liked != likedNow) { likedNow = liked; updateButtons(); }
+                });
+            } catch (Exception e) { Log.w(TAG, "liked: " + e.getMessage()); }
+        });
+    }
+
+    private void toggleLike() {
+        MediaItem now = active != null ? active.getCurrentMediaItem() : null;
+        if (now == null || now.mediaId.isEmpty() || now.mediaId.startsWith("d:")) return;
+        String id = now.mediaId;
+        boolean want = !(likedNow && id.equals(likedId));
+        likedId = id;
+        likedNow = want;
+        updateButtons();
+        AutoLink.io.execute(() -> {
+            try {
+                AutoLink.callNow("POST", "/api/tracks/" + Uri.encode(id) + "/like", json("liked", want));
+                JSONObject ev = new JSONObject();
+                ev.put("action", "liked"); ev.put("id", id); ev.put("liked", want);
+                emit("remote", ev);
+                main.post(() -> { if (session != null) { session.notifyChildrenChanged("lists", 0, null); session.notifyChildrenChanged("liked", 0, null); } });
+            } catch (Exception e) {
+                Log.w(TAG, "like: " + e.getMessage());
+                main.post(() -> { if (id.equals(likedId)) { likedNow = !want; updateButtons(); } });
+            }
+        });
+    }
+
+    /** Aléatoire with the app asleep: the songs after this one, mixed (or back in order). */
+    private void shuffleHere() {
+        if (active == null) return;
+        shuffleOn = !shuffleOn;
+        if (items.size() > 1) {
+            List<Item> rest = new ArrayList<>(items.subList(1, items.size()));
+            List<Item> next;
+            if (shuffleOn) {
+                carOrder = new ArrayList<>(rest);
+                next = new ArrayList<>(rest);
+                Collections.shuffle(next);
+            } else if (carOrder != null) {
+                next = new ArrayList<>();
+                for (Item i : carOrder) if (rest.contains(i)) next.add(i);
+                carOrder = null;
+            } else next = rest;
+            setUpcoming(next);
+        }
+        updateButtons();
+    }
+
+    /** Répéter with the app asleep: non → tout → ce titre. */
+    private void repeatHere() {
+        repeatMode = (repeatMode + 1) % 3;
+        if (exo != null) exo.setRepeatMode(repeatMode == 2 ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
+        updateButtons();
+    }
+
+    /** The equalizer button: the next preset, kept in your preferences, the app told. */
+    private void nextEqualizer() {
+        AutoLink.io.execute(() -> {
+            try {
+                Object r = AutoLink.callNow("POST", "/api/auto/eq/next", new JSONObject());
+                if (r instanceof JSONObject) applyServerEqualizer((JSONObject) r);
+                emit("prefs", new JSONObject());
+            } catch (Exception e) { Log.w(TAG, "eq: " + e.getMessage()); }
+        });
+    }
+
+    /** At start: the equalizer you chose (the app does it when it's open). */
+    private void loadEqualizer() {
+        try {
+            Object r = AutoLink.callNow("GET", "/api/auto/eq", null);
+            if (r instanceof JSONObject) {
+                JSONObject o = (JSONObject) r;
+                if (appAlive()) { eqName = o.optString("name", eqName); updateButtons(); }
+                else applyServerEqualizer(o);
+            }
+        } catch (Exception e) { Log.w(TAG, "eq at start: " + e.getMessage()); }
+    }
+
+    private void applyServerEqualizer(JSONObject r) {
+        JSONObject eq = r.optJSONObject("eq");
+        String name = r.optString("name", "Désactivé");
+        main.post(() -> {
+            eqName = name;
+            if (eq != null) {
+                JSONArray bands = eq.optJSONArray("bands");
+                float[] b = new float[BAND_HZ.length];
+                for (int i = 0; bands != null && i < b.length && i < bands.length(); i++) b[i] = (float) bands.optDouble(i, 0);
+                setEqualizer(eq.optBoolean("enabled", false), b, (float) eq.optDouble("preamp", 0));
+            }
+            updateButtons();
+        });
+    }
+
+    // ------------------------------------------- what was playing, kept
+    /** The queue (its songs, not their addresses: those change) and the position, for the next start. */
+    private void saveResume() {
+        if (items.isEmpty() || active == null) return;
+        JSONArray songs = new JSONArray();
+        try {
+            for (int k = 0; k < items.size() && k < 300; k++) {
+                Item i = items.get(k);
+                if (i.id == null || i.id.isEmpty()) continue;
+                JSONObject o = new JSONObject();
+                if (i.id.startsWith("d:")) {
+                    o.put("deezer_id", i.id.substring(2));
+                    o.put("title", i.title); o.put("artist", i.artist); o.put("album", i.album);
+                    o.put("duration", i.durationMs / 1000.0);
+                } else o.put("local_id", i.id);
+                songs.put(o);
+            }
+            JSONObject out = new JSONObject();
+            out.put("songs", songs);
+            out.put("index", 0);
+            out.put("position", Math.max(0, active.getCurrentPosition()));
+            byte[] data = out.toString().getBytes(StandardCharsets.UTF_8);
+            File file = new File(getFilesDir(), "car-resume.json");
+            AutoLink.io.execute(() -> {
+                try (FileOutputStream f = new FileOutputStream(file)) { f.write(data); } catch (Exception e) { Log.w(TAG, "resume save: " + e.getMessage()); }
+            });
+        } catch (Exception e) { Log.w(TAG, "resume: " + e.getMessage()); }
+    }
+
+    @Nullable
+    private JSONObject readResume() {
+        File file = new File(getFilesDir(), "car-resume.json");
+        if (!file.exists()) return null;
+        try (FileInputStream in = new FileInputStream(file)) {
+            return new JSONObject(AutoLink.read(in));
+        } catch (Exception e) { return null; }
+    }
 
     private static JSONObject jump(String id) {
         JSONObject o = new JSONObject();

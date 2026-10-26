@@ -318,6 +318,9 @@ function createApp() {
     return withOwned(playlists.addItems(pl.id, mix.tracks))
   }))
 
+  // --------------------------------------------------------- in the car
+  require('./auto').routes(app, { wrap, port: () => Number(process.env.ECHO_PORT || 3433), mediaToken: MEDIA_TOKEN, owned: markOwned })
+
   // -------------------------------------------------------------- follows
   app.get('/api/dislikes', wrap(() => dislikes.list()))
   app.post('/api/dislikes', wrap(req => dislikes.add(req.body || {})))

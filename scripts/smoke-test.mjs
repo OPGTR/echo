@@ -327,6 +327,25 @@ try {
   const castRes = castPort && await fetch(`http://127.0.0.1:${castPort}${castPath}/stream/${by['Formation'].id}`)
   ok('casting: songs served on the Wi-Fi with their own secret', castRes?.ok && (await fetch(`http://127.0.0.1:${castPort}/c/wrong/stream/${by['Formation'].id}`)).status === 404, castInfo.base)
   await api('/cast/stop', {})
+
+  // ------------------------------------------------ 0.4: Android Auto
+  const root = await api('/auto/children?id=root')
+  ok('0.4: the car has 3 tabs (Pour toi, Playlists, Bibliothèque)', root.map(x => x.title).join() === 'Pour toi,Playlists,Bibliothèque' && root.every(x => x.browsable), JSON.stringify(root).slice(0, 160))
+  const lists = await api('/auto/children?id=lists')
+  ok('0.4: Titres aimés and Téléchargés with their counts', lists[0]?.title === 'Titres aimés' && lists[0].subtitle === `${(await api('/library/tracks?liked=1')).length} titres` && lists[1]?.subtitle === `Sur ton téléphone · ${(await api('/library/tracks?limit=5000')).length} titres`, JSON.stringify(lists.slice(0, 2)))
+  const carPl = await api('/playlists', { name: 'Road trip', tracks: [{ local_id: by['Formation'].id, title: 'Formation', artist: 'Beyoncé' }, { deezer_id: '99999', title: 'Pas encore là', artist: 'Personne' }] })
+  const rows = await api(`/auto/children?id=${encodeURIComponent('pl/' + carPl.id)}`)
+  ok('0.4: a playlist in the car: Lire, Aléatoire, its songs (↓ on the downloaded one)', rows.map(x => x.title).join() === 'Lire,Aléatoire,Formation,Pas encore là' && rows[2].downloaded === true && !rows[3].downloaded && rows[2].art === `content://com.opgtr.echo.art/t/${by['Formation'].id}`, JSON.stringify(rows.map(x => [x.title, x.downloaded, x.art])))
+  const picked = await api('/auto/play', { id: rows[2].id })
+  ok('0.4: a song picked in the car plays from the library, the queue goes to the app', picked.index === 0 && picked.songs.length === 2 && picked.context === 'playlist' && /\/api\/stream\/.+\?t=/.test(picked.items?.[0]?.url || '') && picked.items[0].quality, JSON.stringify(picked).slice(0, 300))
+  const said = await api('/auto/play', { query: 'Mets du Daft Punk' })
+  ok('0.4: « Mets du Daft Punk » plays his mix', said.node === 'amix/27' && said.context === 'mix' && said.songs.length > 0, JSON.stringify(said).slice(0, 200))
+  const found = await api('/auto/search?q=Daft%20Punk')
+  ok('0.4: search in the car: the artist\'s mix first, then songs', found[0]?.title === 'Mix Daft Punk' && found[0].group === 'Artiste suivi' && found.some(x => x.group === 'Titres'), JSON.stringify(found.slice(0, 2)).slice(0, 240))
+  const eq1 = await api('/auto/eq/next', {})
+  ok('0.4: the car\'s equalizer button goes to the next preset and is kept', eq1.name === 'Basses+' && (await api('/prefs')).eq?.preset === 'bass' && (await api('/prefs')).theme === 'luce', JSON.stringify(eq1))
+  const back = await api('/auto/resume', { songs: [{ local_id: by['Formation'].id, title: 'Formation' }], index: 0 })
+  ok('0.4: what was playing comes back when the car starts', back?.items?.[0]?.id === by['Formation'].id && /Basses\+/.test(back.items[0].quality), JSON.stringify(back).slice(0, 200))
 } catch (e) {
   ok('smoke test ran', false, e.stack)
 } finally {

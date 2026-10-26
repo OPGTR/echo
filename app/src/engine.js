@@ -34,6 +34,8 @@ function nativeEngine() {
     setNext: next => EchoPlayer.setNext({ next: next || null }).catch(() => {}),
     setLibrary: items => EchoPlayer.setLibrary({ items }).catch(() => {}),
     setUpcoming: items => EchoPlayer.setUpcoming({ items: items || [] }).catch(() => {}),
+    /** Shuffle, repeat and ♥ as the app has them (the car's buttons show the same). */
+    setModes: modes => EchoPlayer.setModes(modes).catch(() => {}),
     play: () => EchoPlayer.play().catch(() => {}),
     pause: () => EchoPlayer.pause().catch(() => {}),
     seek: position => EchoPlayer.seek({ position }).catch(() => {}),
@@ -110,6 +112,7 @@ function webEngine() {
     },
     setNext: n => { next = n || null },
     setLibrary: () => {},
+    setModes: () => {},
     // The browser plays the first one that is already here (tests).
     setUpcoming: items => { const first = (items || [])[0]; next = first && !String(first.id).startsWith('d:') ? first : null },
     play: () => { buildGraph(); graph?.ctx.resume?.(); return audio.play().catch(() => {}) },

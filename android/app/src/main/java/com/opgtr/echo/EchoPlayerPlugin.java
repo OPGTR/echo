@@ -156,6 +156,16 @@ public class EchoPlayerPlugin extends Plugin {
         withService(call, s -> { s.setUpcoming(list); call.resolve(); });
     }
 
+    /** Shuffle, repeat and ♥ as the app has them: the car's buttons show the same. */
+    @PluginMethod
+    public void setModes(PluginCall call) {
+        Boolean shuffle = call.getBoolean("shuffle");
+        String repeat = call.getString("repeat");
+        String likeId = call.getString("likedId");
+        Boolean liked = call.getBoolean("liked");
+        withService(call, s -> { s.setModes(shuffle, repeat, likeId, liked); call.resolve(); });
+    }
+
     @PluginMethod public void play(PluginCall call) { withService(call, s -> { s.play(); call.resolve(); }); }
     @PluginMethod public void pause(PluginCall call) { withService(call, s -> { s.pause(); call.resolve(); }); }
     @PluginMethod public void stop(PluginCall call) { withService(call, s -> { s.stopPlayback(); call.resolve(); }); }
@@ -265,6 +275,8 @@ public class EchoPlayerPlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
+        // No window to follow the car any more: the player decides alone.
+        PlaybackService.listener = null;
         if (router != null) router.removeCallback(routerCallback);
         if (controllerFuture != null) MediaController.releaseFuture(controllerFuture);
         super.handleOnDestroy();

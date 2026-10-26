@@ -80,6 +80,12 @@
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
             android:theme="@style/AppTheme.NoActionBar" />
 
+        <!-- Covers for the car screen (Android Auto only shows content:// pictures). -->
+        <provider
+            android:name=".ArtProvider"
+            android:authorities="${applicationId}.art"
+            android:exported="true" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

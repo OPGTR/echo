@@ -95,6 +95,24 @@ onEngine(e => {
   } else if (e.type === 'remote') {
     if (e.action === 'next') next()
     else if (e.action === 'previous') previous()
+    else if (e.action === 'shuffle') toggleShuffle()
+    else if (e.action === 'repeat') cycleRepeat()
+    else if (e.action === 'liked') {
+      // ♥ touched in the car.
+      set({ liked: { ...get().liked, [e.id]: !!e.liked } })
+      useApp.getState().libraryChanged()
+    } else if (e.action === 'car') {
+      // Picked in the car (or asked by voice): it plays already, the app follows.
+      const songs = Array.isArray(e.songs) ? e.songs.filter(x => x && (x.local_id || x.deezer_id)) : []
+      if (!songs.length) return
+      flushListen()
+      ++generation
+      const index = Math.max(0, Math.min(Number(e.index) || 0, songs.length - 1))
+      const song = songs[index]
+      set({ queue: songs, index, context: e.context || 'list', shuffle: !!e.shuffle, playing: true, loading: false, failed: null, position: 0, duration: song.duration || 0 })
+      if (song.local_id) { listened = { id: song.local_id, seconds: 0, last: 0 }; loadDetails(song.local_id) } else adopt(song)
+      afterStart()
+    }
     else if (e.action === 'jump') {
       // Picked on the car screen (or moved on by the player itself): it plays already.
       flushListen()
@@ -108,6 +126,9 @@ onEngine(e => {
       if (song.local_id) { listened = { id: song.local_id, seconds: 0, last: 0 }; loadDetails(song.local_id) } else adopt(song)
       afterStart()
     }
+  } else if (e.type === 'prefs') {
+    // The equalizer changed in the car: the same here.
+    api.prefs().then(saved => { const prefs = useApp.getState().prefs; useApp.setState({ prefs: { ...prefs, ...saved, eq: { ...prefs.eq, ...(saved.eq || {}) } } }) }).catch(() => {})
   } else if (e.type === 'error') {
     const song = current()
     if (!song) return
@@ -195,6 +216,7 @@ async function loadDetails(id) {
   try {
     const tr = await api.track(id)
     set({ details: { ...get().details, [id]: tr }, liked: { ...get().liked, [id]: !!tr.liked } })
+    syncModes()
     return tr
   } catch { return null }
 }
@@ -307,7 +329,15 @@ function shareLibrary() {
   engine.setLibrary(items)
 }
 
+/** The car's buttons (♥, aléatoire, répéter) show what the app has. */
+function syncModes() {
+  const s = get()
+  const song = s.queue[s.index]
+  engine.setModes?.({ shuffle: !!s.shuffle, repeat: s.repeat, ...(song?.local_id ? { likedId: song.local_id, liked: !!s.liked[song.local_id] } : {}) })
+}
+
 function afterStart() {
+  syncModes()
   prefetch()
   queueNextInEngine()
   shareLibrary()
@@ -436,17 +466,20 @@ export function toggleShuffle() {
   const rest = s.queue.slice(s.index + 1)
   set({ shuffle: !s.shuffle, queue: [...done, ...(s.shuffle ? rest : shuffled(rest, -1))] })
   queueNextInEngine()
+  syncModes()
 }
 export function cycleRepeat() {
   const order = ['off', 'all', 'one']
   set({ repeat: order[(order.indexOf(get().repeat) + 1) % order.length] })
   queueNextInEngine()
+  syncModes()
 }
 
 export async function toggleLike(localId) {
   if (!localId) return
   const liked = !get().liked[localId]
   set({ liked: { ...get().liked, [localId]: liked } })
+  syncModes()
   try { await api.like(localId, liked); useApp.getState().libraryChanged() } catch { set({ liked: { ...get().liked, [localId]: !liked } }) }
 }
 

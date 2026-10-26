@@ -1,7 +1,7 @@
 {
   "name": "echo",
   "private": true,
-  "version": "0.3.8.1",
+  "version": "0.4.0",
   "description": "Écho: your music offline, songs downloaded in one tap, daily mixes from what you listen to. Android.",
   "license": "MIT",
   "scripts": {
@@ -10,7 +10,8 @@
     "build": "npm run build:app && npm run build:server",
     "dev:server": "ECHO_DEV=1 ECHO_UI_DIR=www node www/nodejs/index.js",
     "test": "node scripts/smoke-test.mjs",
-    "icons": "python3 scripts/make-icons.py"
+    "icons": "python3 scripts/make-icons.py",
+    "postinstall": "node scripts/patch-nodejs.mjs"
   },
   "dependencies": {
     "@capacitor/android": "8.5.3",

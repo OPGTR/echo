@@ -10,6 +10,7 @@ import { engine, BANDS } from '../engine'
 import Back from '../components/Back'
 import { pickFolder, setLauncherIcon, pinShortcut, installApk, appInfo, isNative, EchoNative, dynamicColors } from '../native'
 import { applyTheme } from '../theme'
+import PRESETS from '../eq-presets.json'
 import { setUpSource } from './Settings'
 import { t } from '../i18n'
 import { version } from '../version'
@@ -27,14 +28,8 @@ const TIERS = [
   { id: 'cd', name: 'FLAC 16 bits · 44,1 kHz', note: 'Qualité CD', size: '~ 300 Mo par album', per1000: '~ 30 Go' },
   { id: 'lossy', name: 'MP3 · 128 kbps', note: 'Léger', size: '~ 45 Mo par album', per1000: '~ 4 Go' },
 ]
-export const EQ_PRESETS = {
-  flat: { name: 'Plat', bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
-  bass: { name: 'Basses+', bands: [6, 5, 4, 2, 0, 0, 0, 1, 1, 1] },
-  vocal: { name: 'Voix', bands: [-2, -2, -1, 1, 3, 4, 3, 1, 0, -1] },
-  electro: { name: 'Électro', bands: [5, 4, 1, 0, -2, 1, 1, 2, 4, 5] },
-  acoustic: { name: 'Acoustique', bands: [3, 2, 1, 1, 1, 1, 2, 3, 2, 1] },
-  custom: { name: 'Perso', bands: null },
-}
+// The same presets as in the car (server/auto.js reads this file too).
+export const EQ_PRESETS = PRESETS
 
 function Row({ label, value, onClick, accent = false }) {
   return (
