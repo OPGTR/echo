@@ -367,7 +367,12 @@ public class PlaybackService extends MediaLibraryService {
             final String id = mediaItem.mediaId;
             main.post(() -> {
                 if (active == null) return;
-                while (active.getCurrentMediaItemIndex() > 0) active.removeMediaItem(0);
+                // One request, not a loop: on the TV (CastPlayer) the removal
+                // only shows once the TV answers, and that answer comes on this
+                // same thread. Looping until it showed froze the app (music
+                // going on on the TV, nothing answering on the phone).
+                int index = active.getCurrentMediaItemIndex();
+                try { if (index > 0) active.removeMediaItems(0, index); } catch (RuntimeException e) { Log.w(TAG, "drop finished: " + e.getMessage()); }
                 while (items.size() > 1 && !id.equals(items.get(0).id)) remember(items.remove(0));
                 // The queue here is running low: the app adds more when it can.
             });
