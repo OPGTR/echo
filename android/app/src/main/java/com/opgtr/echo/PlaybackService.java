@@ -46,8 +46,10 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 
 import com.google.android.gms.cast.Cast;
+import com.google.android.gms.cast.MediaStatus;
 import com.google.android.gms.cast.framework.CastContext;
 import com.google.android.gms.cast.framework.CastSession;
+import com.google.android.gms.cast.framework.media.RemoteMediaClient;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -349,7 +351,12 @@ public class PlaybackService extends MediaLibraryService {
 
         @Override
         public void onPlaybackStateChanged(int state) {
-            if (state == Player.STATE_ENDED && active != null && active.getMediaItemCount() > 0) {
+            // On the TV the end of the list never shows as "ended" (CastPlayer
+            // only says "idle"): the TV's own reason tells it finished. Without
+            // this the app never heard of it and the next song didn't come.
+            boolean tvFinished = state == Player.STATE_IDLE && isCasting() && castFinished();
+            // (The TV may have emptied its list by then: no count asked.)
+            if (tvFinished || (state == Player.STATE_ENDED && active != null && active.getMediaItemCount() > 0)) {
                 emit("ended", status());
                 // Started from the car, the app asleep: "Répéter : tout" starts again.
                 if (!appAlive() && repeatMode == 1 && carAll != null && !carAll.isEmpty()) main.post(() -> playCarQueue(new ArrayList<>(carAll), 0));
@@ -571,6 +578,13 @@ public class PlaybackService extends MediaLibraryService {
     }
 
     boolean isCasting() { return active != null && active == castPlayer; }
+
+    /** The TV stopped because its list ran out (not paused, not an error, not taken by another app). */
+    private boolean castFinished() {
+        CastSession c = castSession();
+        RemoteMediaClient r = c != null ? c.getRemoteMediaClient() : null;
+        return r != null && r.getPlayerState() == MediaStatus.PLAYER_STATE_IDLE && r.getIdleReason() == MediaStatus.IDLE_REASON_FINISHED;
+    }
 
     // --------------------------------------------------------- equalizer
     static final int[] BAND_HZ = {32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};

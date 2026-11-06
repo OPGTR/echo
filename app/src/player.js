@@ -283,8 +283,13 @@ async function queueNextInEngine() {
   const after = s.queue.slice(s.index + 1)
   const ahead = (s.repeat === 'all' ? [...after, ...s.queue.slice(0, s.index + 1)] : after).slice(0, 300)
   const remote = s.context !== 'search' && !!useApp.getState().source?.installed
+  // On the TV each song needs its real format (an MP3 announced as FLAC can
+  // stop the TV): the next 30 with their details, the list is renewed at
+  // each song anyway.
+  const list = s.cast.base ? ahead.slice(0, 30) : ahead
+  if (s.cast.base) await Promise.all(list.filter(x => x.local_id && !get().details[x.local_id]).map(x => loadDetails(x.local_id)))
   const items = []
-  for (const [i, song] of ahead.entries()) {
+  for (const [i, song] of list.entries()) {
     // The next one in full (its format, for a gapless start); the others light.
     const item = i === 0 ? await itemFor(song, { remote }) : lightItem(song, { remote })
     if (!item) break // the order matters: stop at a song that can't be got
