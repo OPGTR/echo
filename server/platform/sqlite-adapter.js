@@ -13,6 +13,7 @@
 // created and leaked on every db.prepare(...).get() call.
 
 const { Database: WasmDatabase } = require('node-sqlite3-wasm')
+const fs = require('fs')
 
 const CACHE_LIMIT = 400
 const PARAM_RE = /([@:$])([A-Za-z_][A-Za-z0-9_]*)/g
@@ -261,6 +262,11 @@ class Database {
     this.name = filename
     this.memory = filename === ':memory:' || filename === ''
     this.readonly = !!options.readonly
+    // This VFS locks the file with a folder (<file>.lock). If Écho was killed while it
+    // wrote (system update, forced stop, battery), the folder stays and every later start
+    // fails with "database is locked". Écho's server is the only one using its database
+    // (one Node.js per app), so a lock found at start is a stale one.
+    if (!this.memory && !this.readonly) { try { fs.rmdirSync(`${filename}.lock`) } catch {} }
     try {
       this._wasm = new WasmDatabase(this.memory ? ':memory:' : filename, {
         readOnly: !!options.readonly,

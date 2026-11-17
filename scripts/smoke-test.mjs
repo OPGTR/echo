@@ -349,6 +349,20 @@ try {
 } catch (e) {
   ok('smoke test ran', false, e.stack)
 } finally {
+  // 0.4.0.3: a lock folder left by a killed Écho (system update) no longer blocks the next start.
+  {
+    const { createRequire } = await import('node:module')
+    const req = createRequire(import.meta.url)
+    const Database = req('../server/platform/sqlite-adapter.js')
+    const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path')
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'echo-lock-'))
+    const file = path.join(dir, 'stale.db')
+    const first = new Database(file); first.exec('CREATE TABLE t (a)'); first.close?.()
+    fs.mkdirSync(`${file}.lock`)
+    let message = ''
+    try { const again = new Database(file); again.exec('INSERT INTO t VALUES (1)'); again.close?.() } catch (e) { message = e.message }
+    ok('0.4.0.3: a stale database lock left by a killed Écho is cleared at start', !message && !fs.existsSync(`${file}.lock`), message)
+  }
   server.kill(); deezer.close()
   await sleep(300)
   const crashes = log.split('\n').filter(l => /uncaught|unhandled rejection|SyntaxError|ReferenceError/.test(l))
