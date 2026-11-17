@@ -185,10 +185,33 @@ function splashLine() {
   return SPLASH[i]
 }
 
-export function Startup({ error, logs, onRetry }) {
+// What the engine reported when Écho couldn't start: the step it reached and
+// what failed, in a few lines the person can copy and send.
+export function reportText(report, logs = []) {
+  if (!report) return (logs || []).slice(-20).join('\n')
+  const yes = v => (v ? t('oui') : t('non'))
+  const lines = [
+    `${t('Moteur Node.js')} : ${report.started ? t('lancé') : t('pas lancé')}, ${report.ready ? t('prêt') : t('pas prêt')} (${report.phase || '?'})`,
+    `${t('Serveur')} : ${report.probe || '?'}`,
+    `${t('Annoncé à l’appli')} : ${yes(report.announced)} · ${t('{n} messages reçus', { n: report.messages ?? 0 })}`,
+  ]
+  if (report.exit !== undefined) lines.push(`${t('Node.js arrêté, code')} ${report.exit}`)
+  if (report.error) lines.push(`${t('Erreur')} : ${report.error}`)
+  lines.push(`${report.device || ''} · Android ${report.sdk ?? '?'} · ${report.build || ''} · Écho ${version}`)
+  const server = (logs && logs.length ? logs : (report.lines || []).map(l => { try { return JSON.parse(l)[0] } catch { return l } })).slice(-20)
+  if (server.length) lines.push('', `${t('Journal du serveur')} :`, ...server)
+  return lines.join('\n')
+}
+
+export function Startup({ error, logs, report, onRetry }) {
   const [slow, setSlow] = useState(false)
   const [line] = useState(splashLine)
+  const [copied, setCopied] = useState(false)
   useEffect(() => { const timer = setTimeout(() => setSlow(true), 4000); return () => clearTimeout(timer) }, [])
+  const text = error ? reportText(report, logs) : ''
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(`${error}\n${text}`); setCopied(true) } catch {}
+  }
   return (
     <div className={`center-screen ${error ? '' : 'startup'}`} style={error ? { alignItems: 'flex-start' } : undefined}>
       <svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true">
@@ -198,8 +221,11 @@ export function Startup({ error, logs, onRetry }) {
       {error ? <>
         <h1>{t('Écho n’a pas pu démarrer')}</h1>
         <p className="note">{error}</p>
-        <div className="btn-row"><button type="button" className="btn primary" onClick={onRetry}>{t('Réessayer')}</button></div>
-        {logs?.length > 0 && <pre>{logs.slice(-20).join('\n')}</pre>}
+        <div className="btn-row">
+          <button type="button" className="btn primary" onClick={onRetry}>{t('Réessayer')}</button>
+          <button type="button" className="btn" onClick={copy}>{copied ? t('Copié') : t('Copier le rapport')}</button>
+        </div>
+        {text && <pre>{text}</pre>}
       </> : <>
         <h1>Écho</h1>
         <p className="splash-line" role="status">{line}</p>

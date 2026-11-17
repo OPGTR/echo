@@ -269,6 +269,57 @@ public class EchoNativePlugin extends Plugin {
         call.resolve(out);
     }
 
+    /**
+     * What the built-in Node.js engine is doing, for the "Écho couldn't start"
+     * screen: the step it reached, what failed, the server's last log lines,
+     * and whether anything answers on the server's port.
+     */
+    @PluginMethod
+    public void engineReport(PluginCall call) {
+        new Thread(() -> {
+            JSObject out;
+            try {
+                out = new JSObject(net.hampoelz.capacitor.nodejs.CapacitorNodeJS.echoReport());
+            } catch (Throwable e) {
+                out = new JSObject();
+                out.put("error", String.valueOf(e));
+            }
+            out.put("probe", probe(3433));
+            out.put("sdk", Build.VERSION.SDK_INT);
+            out.put("device", Build.MANUFACTURER + " " + Build.MODEL);
+            out.put("build", Build.VERSION.INCREMENTAL);
+            call.resolve(out);
+        }, "echo-report").start();
+    }
+
+    private static String probe(int port) {
+        java.net.HttpURLConnection c = null;
+        try {
+            c = (java.net.HttpURLConnection) new java.net.URL("http://127.0.0.1:" + port + "/").openConnection();
+            c.setConnectTimeout(1500);
+            c.setReadTimeout(1500);
+            return "HTTP " + c.getResponseCode();
+        } catch (Throwable e) {
+            return String.valueOf(e.getMessage());
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    /**
+     * Where the server is and its secret, as Node.js announced them ("echo-ready"):
+     * the app asks when its own listener missed the announcement.
+     */
+    @PluginMethod
+    public void engineInfo(PluginCall call) {
+        JSObject out = new JSObject();
+        try {
+            String info = net.hampoelz.capacitor.nodejs.CapacitorNodeJS.echoInfo();
+            if (info != null) out.put("info", info);
+        } catch (Throwable ignored) {}
+        call.resolve(out);
+    }
+
     /** Tells Android about new files so other music apps see them at once. */
     @PluginMethod
     public void scanFiles(PluginCall call) {

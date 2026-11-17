@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useApp, watchDownloads } from './store'
 import { usePlayer, openFull, restoreSession } from './player'
 import { api, setServer } from './api'
-import { connectServer, serverLogs, storagePaths, onBackButton, minimize, onResume } from './native'
+import { connectServer, serverLogs, engineReport, storagePaths, onBackButton, minimize, onResume } from './native'
 import Home, { MixScreen } from './screens/Home'
 import Search, { CatalogueAlbum, CatalogueArtist } from './screens/Search'
 import Library, { LocalAlbum, LocalArtist, FollowsScreen } from './screens/Library'
@@ -60,6 +60,7 @@ export default function App() {
   const [phase, setPhase] = useState('starting') // starting | onboarding | ready | failed
   const [error, setError] = useState('')
   const [logs, setLogs] = useState([])
+  const [report, setReport] = useState(null)
 
   const start = async () => {
     const begun = Date.now()
@@ -92,6 +93,7 @@ export default function App() {
     } catch (e) {
       setError(e.message || String(e))
       setLogs(await serverLogs().catch(() => []))
+      setReport(await engineReport())
       setPhase('failed')
     }
   }
@@ -135,7 +137,7 @@ export default function App() {
   // Some screens are a step to finish (create a mix): no tabs under them.
   const focused = useApp(s => !!s.selection || ['mix-create', 'add-songs', 'cover'].includes(s.stack[s.stack.length - 1]?.type))
 
-  if (phase === 'starting' || phase === 'failed') return <Startup error={phase === 'failed' ? error : ''} logs={logs} onRetry={start} />
+  if (phase === 'starting' || phase === 'failed') return <Startup error={phase === 'failed' ? error : ''} logs={logs} report={report} onRetry={start} />
   if (phase === 'onboarding') return <Onboarding onDone={() => setPhase('ready')} />
   return (
     <div className="app">

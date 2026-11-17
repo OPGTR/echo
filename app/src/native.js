@@ -25,23 +25,38 @@ export function connectServer({ timeoutMs = 90000 } = {}) {
   }
   return new Promise((resolve, reject) => {
     let done = false
-    const timer = setTimeout(() => { if (!done) reject(new Error('The built-in server did not start')) }, timeoutMs)
+    const timer = setTimeout(() => { if (!done) { done = true; reject(new Error('The built-in server did not start')) } }, timeoutMs)
+    const finish = info => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      resolve({ base: `http://127.0.0.1:${info.port}`, token: info.token, mediaToken: info.mediaToken })
+    }
     node().then(async NodeJS => {
-      await NodeJS.addListener('echo-ready', event => {
+      await NodeJS.addListener('echo-ready', event => { try { finish(JSON.parse(event.args[0])) } catch {} })
+      // The server may have announced itself before we listened, or the engine's
+      // own "ready" may have been missed: ask again, and ask the phone's side too,
+      // which kept the announcement. No waiting for "ready" first.
+      const ask = async () => {
         if (done) return
+        NodeJS.send({ eventName: 'echo-hello', args: [] }).catch(() => {})
         try {
-          const info = JSON.parse(event.args[0])
-          done = true
-          clearTimeout(timer)
-          resolve({ base: `http://127.0.0.1:${info.port}`, token: info.token, mediaToken: info.mediaToken })
+          const kept = await EchoNative.engineInfo()
+          if (kept?.info) finish(JSON.parse(kept.info))
         } catch {}
-      })
-      await NodeJS.whenReady()
-      // The server may have announced itself before we listened: ask again.
-      const ask = () => { if (!done) { NodeJS.send({ eventName: 'echo-hello', args: [] }).catch(() => {}); setTimeout(ask, 1500) } }
+        if (!done) setTimeout(ask, 1500)
+      }
       ask()
-    }).catch(reject)
+    }).catch(e => { if (!done) { done = true; clearTimeout(timer); reject(e) } })
   })
+}
+
+/** What the built-in engine is doing (for the "couldn't start" screen): null in a browser or when it can't say. */
+export async function engineReport() {
+  if (!isNative) return null
+  try {
+    return await Promise.race([EchoNative.engineReport(), new Promise(resolve => setTimeout(() => resolve(null), 5000))])
+  } catch { return null }
 }
 
 /** The server's recent log lines (for the "couldn't start" screen). */
